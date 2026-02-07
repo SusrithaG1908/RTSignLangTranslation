@@ -34,6 +34,15 @@ Thumbs.db
 # Cache
 .cache/
 
-# Temporary Files
+# Envrionment variables
+.env
+
+# Images downloaded from Kaggle
+data/
+data_raw/
+
+# Files to be secured
 README_Local.md
 sign_language_translator.ipynb
+kaggle.json
+tasks_progress.txt

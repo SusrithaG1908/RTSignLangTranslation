@@ -123,6 +123,12 @@ data/
  └── test/A, B, C, ...
 ```
 
+### Dataset Setup (Download & Organize)
+
+```bash
+python scripts/download_and_prepare_dataset.py
+```
+
 ### Option B: Collect Your Own Data
 ```bash
 python scripts/collect_data.py
