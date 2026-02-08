@@ -79,23 +79,25 @@ sign_language_translator/
 
 ## ⚙️ Tech Stack
 
-- **Language:** Python  
-- **Deep Learning:** TensorFlow, Keras  
-- **Computer Vision:** OpenCV, MediaPipe  
-- **UI:** Streamlit  
-- **Utilities:** NumPy, scikit-learn, Matplotlib, pyttsx3  
+- **Language:** Python
+- **Deep Learning:** TensorFlow, Keras
+- **Computer Vision:** OpenCV, MediaPipe
+- **UI:** Streamlit
+- **Utilities:** NumPy, scikit-learn, Matplotlib, pyttsx3
 
 ---
 
 ## 📦 Installation & Setup
 
 ### 1️⃣ Clone the Repository
+
 ```bash
-git clone https://github.com/<your-username>/sign_language_translator.git
-cd sign_language_translator
+git clone https://github.com/<your-username>/RTSignLangTranslation.git
+cd RTSignLangTranslation
 ```
 
 ### 2️⃣ Create Virtual Environment (Recommended)
+
 ```bash
 python -m venv venv
 ```
@@ -103,6 +105,7 @@ python -m venv venv
 Activate:
 
 **Windows**
+
 ```bash
 venv\Scripts\activate
 ```
