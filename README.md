@@ -1,6 +1,20 @@
 # 🤟 Sign Language Translator (AI/ML Project)
 
+**Problem Statement**
+People with hearing and speech impairments use sign language as their primary means of communication. However, most people do not understand sign language, leading to communication barriers. There is a need for an automated system that can translate sign language gestures into text and speech in real time to facilitate smooth communication.
+
+**Solution**
 An AI-powered **Sign Language Translator** that recognizes hand gestures from images or webcam feed and converts them into **text** (and optional **speech**). Built using **Computer Vision** and **Deep Learning (CNN)** to help bridge communication gaps for hearing-impaired users.
+
+---
+
+## 📌 Objectives
+
+- To design a real-time sign language recognition system
+- To train a deep learning model to classify hand gestures
+- To display recognized signs as text
+- To optionally convert text output into speech
+- To build a simple user interface for interaction
 
 ---
 

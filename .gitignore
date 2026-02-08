@@ -43,6 +43,7 @@ data_raw/
 
 # Files to be secured
 README_Local.md
-sign_language_translator.ipynb
+sign_language_translator_v1.ipynb
+sign_language_translator_v2.ipynb
 kaggle.json
 tasks_progress.txt
