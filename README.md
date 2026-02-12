@@ -99,15 +99,40 @@ cd RTSignLangTranslation
 ### 2️⃣ Create Virtual Environment (Recommended)
 
 ```bash
-python -m venv venv
-```
+Check available Python versions on system:
+py -0p
+
+If single python version is available on system:
+
+Create Virtual Environment
+python -m venv .venv
 
 Activate:
-
 **Windows**
+.\.venv\Scripts\activate
 
-```bash
-venv\Scripts\activate
+If multiple python versions are available on system:
+
+Create Virtual Environment
+py -3.11 -m venv .venv
+
+Activate:
+**Windows**
+.\.venv\Scripts\activate
+
+Check Version:
+python --version
+
+Create ipykernel associated with venv
+pip install ipykernel
+
+Register ipykernel to select from IDE
+python -m ipykernel install --user --name venv311 --display-name "Python 3.11 (.venv)"
+
+Select "Python 3.11 (.venv)" as the Python Interpreter in IDE
+Press Ctrl + Shift + P
+Select Python Interpreter
+From the available list, select "Python 3.11 (.venv)"
 ```
 
 ## 📁 Dataset Setup
@@ -125,6 +150,12 @@ data/
 
 ```bash
 python scripts/download_and_prepare_dataset.py
+```
+
+### Collect Your Own Dataset (Looks Great in Demo & Viva)
+
+```bash
+python scripts/collect_data.py
 ```
 
 ## 🏋️ Model Training
