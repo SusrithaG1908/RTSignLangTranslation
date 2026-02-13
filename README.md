@@ -192,7 +192,48 @@ python scripts/app.py
 
 ## 📈 Results
 
+Accuracy Loss Plot:
 ![alt text](reports/Figure_2_epochs_accuary_loss_withMediaPipe.png)
+
+Classification Report:
+
+              precision    recall  f1-score   support
+
+           A       0.72      0.50      0.59       825
+           B       0.61      0.63      0.62       833
+           C       0.52      0.61      0.56       836
+           D       0.47      0.67      0.55       826
+           E       0.84      0.41      0.56       829
+           F       0.84      0.68      0.75       828
+           G       0.70      0.45      0.55       830
+           H       0.63      0.67      0.65       845
+           I       0.39      0.66      0.49       831
+           J       0.74      0.51      0.60       833
+           K       0.74      0.45      0.56       829
+           L       0.66      0.58      0.62       820
+           M       0.41      0.72      0.52       825
+           N       0.41      0.81      0.54       823
+           O       0.46      0.53      0.49       833
+           P       0.78      0.55      0.65       834
+           Q       0.79      0.51      0.62       832
+           R       0.45      0.44      0.44       845
+           S       0.67      0.43      0.52       840
+           T       0.85      0.31      0.46       820
+           U       0.40      0.32      0.36       834
+           V       0.72      0.34      0.46       835
+           W       0.71      0.45      0.55       822
+           X       0.75      0.31      0.44       826
+           Y       0.61      0.46      0.52       848
+           Z       0.73      0.45      0.55       826
+         del       0.51      0.88      0.65       820
+     nothing       1.00      0.54      0.70       831
+       space       0.25      0.90      0.39       837
+
+    accuracy                           0.54     24096
+   macro avg       0.63      0.54      0.55     24096
+weighted avg       0.63      0.54      0.55     24096
+
+Confusion Matrix:
 ![alt text](reports/Figure_3_confusionmatrix_withMediaPipe.png)
 
 ## ⚠️ Limitations
