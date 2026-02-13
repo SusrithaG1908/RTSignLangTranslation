@@ -64,13 +64,17 @@ sign_language_translator/
 │   └── class_labels.json
 │
 ├── scripts/
+│   ├── download_and_prepare_dataset.py
 │   ├── collect_data.py
+│   ├── crop_existing_dataset_with_mediapipe.py
 │   ├── preprocess.py
 │   ├── train_model.py
+│   ├── evaluate_model.py
 │   ├── predict_webcam.py
-│   └── evaluate_model.py
+│   ├── crop_input_image_with_mediapipe.py
+│   ├── predict_single_image.py
+│   └── app.py
 │
-├── app.py
 ├── requirements.txt
 └── README.md
 ```
@@ -152,17 +156,44 @@ data/
 python scripts/download_and_prepare_dataset.py
 ```
 
-### Collect Your Own Dataset (Looks Great in Demo & Viva)
+### Collect Your Own Dataset
 
 ```bash
 python scripts/collect_data.py
 ```
 
+### Preprocess
+
+```bash
+python scripts/crop_existing_dataset_with_mediapipe.py
+python scripts/preprocess.py
+```
+
 ## 🏋️ Model Training
+
+```bash
+python scripts/train_model.py
+python scripts/evaluate_model.py
+```
+
+## Real Time Inference
+
+```bash
+python scripts/predict_webcam.py
+python scripts/crop_input_image_with_mediapipe.py
+python scripts/predict_single_image.py
+```
 
 ## 🌐 Web UI (Streamlit)
 
-## 📈 Results (Sample)
+```bash
+python scripts/app.py
+```
+
+## 📈 Results
+
+![alt text](reports/Figure_2_epochs_accuary_loss_withMediaPipe.png)
+![alt text](reports/Figure_3_confusionmatrix_withMediaPipe.png)
 
 ## ⚠️ Limitations
 
