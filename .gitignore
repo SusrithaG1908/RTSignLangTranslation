@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv_mediapipe/
 .env/
 .env.bak/
 .env.local/
@@ -40,6 +41,7 @@ Thumbs.db
 # Images downloaded from Kaggle
 data/
 data_raw/
+data_mp/
 
 # Files to be secured
 README_Local.md
@@ -50,3 +52,8 @@ tasks_progress.txt
 Notes
 reports/
 captured_frames/
+
+# intermediate files to be excluded
+test_images/
+cropped_images/
+test.py
