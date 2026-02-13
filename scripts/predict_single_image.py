@@ -11,6 +11,9 @@ LABELS_PATH = "../models/class_labels.json"
 IMAGE_DIR = "../test_images"
 DEFAULT_IMAGE = "sample.jpg"
 
+IMAGE_DIR = "../cropped_images"
+DEFAULT_IMAGE = "cropped_sample.jpg"
+
 # 👉 Prompt user for image name
 img_name = input(f"Enter image name (default: {DEFAULT_IMAGE}): ").strip()
 

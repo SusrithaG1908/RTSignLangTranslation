@@ -1,1 +1,10 @@
 pip install kaggle
+pip install opencv-python
+pip install matplotlib
+pip install scipy
+pip install scikit-learn
+pip install seaborn
+
+
+
+python -m pip install mediapipe==0.10.14 protobuf==4.25.3 opencv-python numpy tqdm

@@ -9,8 +9,11 @@ IMG_SIZE = (128, 128)
 BATCH_SIZE = 32
 EPOCHS = 30
 
-train_dir = "../data/train"
-val_dir = "../data/val"
+#train_dir = "../data/train"
+#val_dir = "../data/val"
+
+train_dir = "../data_mp/train"
+val_dir = "../data_mp/val"
 
 train_datagen = ImageDataGenerator(
     rescale=1./255,
