@@ -4,35 +4,38 @@
 
 import os
 import shutil
-import zipfile
 import random
 import subprocess
+from pathlib import Path
+
+# -------- Resolve project root safely --------
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Config
 DATASET = "grassknoted/asl-alphabet"
-RAW_DIR = "data_raw"
-OUT_DIR = "data"
+RAW_DIR = PROJECT_ROOT / "data_raw"
+OUT_DIR = PROJECT_ROOT / "data"
 SPLIT = (0.7, 0.15, 0.15)  # train, val, test
 
 def download_dataset():
     print("📥 Downloading ASL Alphabet dataset from Kaggle...")
-    os.makedirs(RAW_DIR, exist_ok=True)
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run([
         "kaggle", "datasets", "download",
         "-d", DATASET,
-        "-p", RAW_DIR,
+        "-p", str(RAW_DIR),
         "--unzip"
     ], check=True)
 
 def organize_dataset():
-    src_root = os.path.join(RAW_DIR, "asl_alphabet_train", "asl_alphabet_train")
+    src_root = RAW_DIR / "asl_alphabet_train" / "asl_alphabet_train"
 
     for split in ["train", "val", "test"]:
-        os.makedirs(os.path.join(OUT_DIR, split), exist_ok=True)
+        (OUT_DIR / split).mkdir(parents=True, exist_ok=True)
 
     for label in os.listdir(src_root):
-        label_path = os.path.join(src_root, label)
-        if not os.path.isdir(label_path):
+        label_path = src_root / label
+        if not label_path.is_dir():
             continue
 
         images = os.listdir(label_path)
@@ -50,20 +53,20 @@ def organize_dataset():
             ["train", "val", "test"],
             [train_imgs, val_imgs, test_imgs]
         ):
-            split_label_dir = os.path.join(OUT_DIR, split_name, label)
-            os.makedirs(split_label_dir, exist_ok=True)
+            split_label_dir = OUT_DIR / split_name / label
+            split_label_dir.mkdir(parents=True, exist_ok=True)
 
             for img in split_imgs:
-                src = os.path.join(label_path, img)
-                dst = os.path.join(split_label_dir, img)
-                shutil.copy(src, dst)
+                src = label_path / img
+                dst = split_label_dir / img
+                shutil.copy(str(src), str(dst))
 
         print(f"✅ {label}: train={len(train_imgs)}, val={len(val_imgs)}, test={len(test_imgs)}")
 
 def main():
     download_dataset()
     organize_dataset()
-    print("\n🎉 Dataset ready at: data/train, data/val, data/test")
+    print(f"\n🎉 Dataset ready at: {OUT_DIR}/train, {OUT_DIR}/val, {OUT_DIR}/test")
 
 if __name__ == "__main__":
     main()

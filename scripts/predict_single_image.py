@@ -2,28 +2,25 @@ import cv2
 import numpy as np
 import json
 from tensorflow.keras.models import load_model
-import os
+from pathlib import Path
 
 # Config
 IMG_SIZE = (128, 128)
-MODEL_PATH = "../models/sign_model.h5"
-LABELS_PATH = "../models/class_labels.json"
-IMAGE_DIR = "../test_images"
-DEFAULT_IMAGE = "sample.jpg"
-
-IMAGE_DIR = "../cropped_images"
 DEFAULT_IMAGE = "cropped_sample.jpg"
 
+# ---- Resolve project root safely ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+MODEL_PATH = PROJECT_ROOT / "models" / "sign_model.h5"
+LABELS_PATH = PROJECT_ROOT / "models" / "class_labels.json"
+IMAGE_DIR = PROJECT_ROOT / "cropped_images"
+
 # 👉 Prompt user for image name
-img_name = input(f"Enter image name (default: {DEFAULT_IMAGE}): ").strip()
-
-if img_name == "":
-    img_name = DEFAULT_IMAGE
-
-IMAGE_PATH = os.path.join(IMAGE_DIR, img_name)
+img_name = input(f"Enter image name (default: {DEFAULT_IMAGE}): ").strip() or DEFAULT_IMAGE
+IMAGE_PATH = IMAGE_DIR / img_name
 
 # Load model
-model = load_model(MODEL_PATH)
+model = load_model(str(MODEL_PATH))
 
 # Load class labels
 with open(LABELS_PATH, "r") as f:
@@ -32,8 +29,7 @@ with open(LABELS_PATH, "r") as f:
 class_labels = {int(v): k for k, v in class_indices.items()}
 
 # Read image
-img_bgr = cv2.imread(IMAGE_PATH)
-
+img_bgr = cv2.imread(str(IMAGE_PATH))
 if img_bgr is None:
     raise FileNotFoundError(f"Image not found at path: {IMAGE_PATH}")
 

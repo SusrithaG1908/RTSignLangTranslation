@@ -2,10 +2,14 @@ import os
 import cv2
 import mediapipe as mp
 from tqdm import tqdm
+from pathlib import Path
+
+# -------- Resolve project root safely --------
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # -------- Config --------
-SRC_ROOT = "data"        # existing organized dataset
-DST_ROOT = "data_mp"    # new cropped dataset
+SRC_ROOT = PROJECT_ROOT / "data"       # existing organized dataset
+DST_ROOT = PROJECT_ROOT / "data_mp"    # new cropped dataset
 IMG_SIZE = (128, 128)
 
 # -------- MediaPipe Setup --------
@@ -41,28 +45,28 @@ def crop_with_mediapipe(img_bgr):
     return crop_resized
 
 def process_split(split_name):
-    src_split = os.path.join(SRC_ROOT, split_name)
-    dst_split = os.path.join(DST_ROOT, split_name)
-    os.makedirs(dst_split, exist_ok=True)
+    src_split = SRC_ROOT / split_name
+    dst_split = DST_ROOT / split_name
+    dst_split.mkdir(parents=True, exist_ok=True)
 
     for label in os.listdir(src_split):
-        src_label_dir = os.path.join(src_split, label)
-        dst_label_dir = os.path.join(dst_split, label)
-        os.makedirs(dst_label_dir, exist_ok=True)
+        src_label_dir = src_split / label
+        dst_label_dir = dst_split / label
+        dst_label_dir.mkdir(parents=True, exist_ok=True)
 
-        if not os.path.isdir(src_label_dir):
+        if not src_label_dir.is_dir():
             continue
 
         for fname in tqdm(os.listdir(src_label_dir), desc=f"{split_name}/{label}"):
-            src_path = os.path.join(src_label_dir, fname)
-            dst_path = os.path.join(dst_label_dir, fname)
+            src_path = src_label_dir / fname
+            dst_path = dst_label_dir / fname
 
-            img = cv2.imread(src_path)
+            img = cv2.imread(str(src_path))
             if img is None:
                 continue
 
             cropped = crop_with_mediapipe(img)
-            cv2.imwrite(dst_path, cropped)
+            cv2.imwrite(str(dst_path), cropped)
 
 def main():
     for split in ["train", "val", "test"]:

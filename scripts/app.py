@@ -6,13 +6,21 @@ from tensorflow.keras.models import load_model
 import json
 import pyttsx3
 from PIL import Image
+from pathlib import Path
 
 IMG_SIZE = (128, 128)
 
+# ---- Resolve project root safely ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODELS_DIR = PROJECT_ROOT / "models"
+
+MODEL_PATH = MODELS_DIR / "sign_model.h5"
+LABELS_PATH = MODELS_DIR / "class_labels.json"
+
 @st.cache_resource
 def load_trained_model():
-    model = load_model("models/sign_model.h5")
-    with open("models/class_labels.json", "r") as f:
+    model = load_model(str(MODEL_PATH))
+    with open(LABELS_PATH, "r") as f:
         class_indices = json.load(f)
     class_labels = {int(v): k for k, v in class_indices.items()}
     return model, class_labels
@@ -37,8 +45,8 @@ if uploaded_file is not None:
     img = np.array(img) / 255.0
     img = np.expand_dims(img, axis=0)
 
-    preds = model.predict(img)
-    pred_class = np.argmax(preds)
+    preds = model.predict(img, verbose=0)
+    pred_class = int(np.argmax(preds))
     confidence = float(np.max(preds))
 
     label = class_labels[pred_class]

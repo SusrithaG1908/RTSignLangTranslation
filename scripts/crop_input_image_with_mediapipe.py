@@ -1,17 +1,21 @@
 import cv2
 import mediapipe as mp
 import os
+from pathlib import Path
 
-IMAGE_DIR = "../test_images"
-OUT_DIR = "../cropped_images"
+# ---- Resolve project root safely ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+IMAGE_DIR = PROJECT_ROOT / "test_images"
+OUT_DIR = PROJECT_ROOT / "cropped_images"
 DEFAULT_IMAGE = "sample.jpg"
 
-os.makedirs(OUT_DIR, exist_ok=True)
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 img_name = input(f"Enter image name (default: {DEFAULT_IMAGE}): ").strip() or DEFAULT_IMAGE
-IMAGE_PATH = os.path.join(IMAGE_DIR, img_name)
+IMAGE_PATH = IMAGE_DIR / img_name
 
-img_bgr = cv2.imread(IMAGE_PATH)
+img_bgr = cv2.imread(str(IMAGE_PATH))
 if img_bgr is None:
     raise FileNotFoundError(f"Image not found: {IMAGE_PATH}")
 
@@ -48,8 +52,8 @@ else:
 
 hand_bgr = cv2.cvtColor(hand_rgb, cv2.COLOR_RGB2BGR)
 
-out_path = os.path.join(OUT_DIR, f"cropped_{img_name}")
-cv2.imwrite(out_path, hand_bgr)
+out_path = OUT_DIR / f"cropped_{img_name}"
+cv2.imwrite(str(out_path), hand_bgr)
 
 # Draw bounding box only if MediaPipe succeeded
 if used_mediapipe:

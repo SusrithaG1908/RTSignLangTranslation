@@ -1,25 +1,35 @@
 import cv2
 import os
+from pathlib import Path
 
 label = "A"  # Change this for each sign
-save_dir = f"../data/raw/{label}"
-os.makedirs(save_dir, exist_ok=True)
+
+# ---- Resolve project root safely ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "data" / "raw" / label
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 cap = cv2.VideoCapture(0)
 count = 0
 
 while True:
     ret, frame = cap.read()
+    if not ret:
+        print("❌ Failed to capture frame from webcam")
+        break
+
     frame = cv2.flip(frame, 1)
     cv2.imshow("Capture - Press 's' to save, 'q' to quit", frame)
 
-    key = cv2.waitKey(1)
+    key = cv2.waitKey(1) & 0xFF
+
     if key == ord('s'):
-        cv2.imwrite(f"{save_dir}/{count}.jpg", frame)
-        print(f"Saved {count}")
+        img_path = DATA_DIR / f"{count}.jpg"
+        cv2.imwrite(str(img_path), frame)
+        print(f"✅ Saved {img_path}")
         count += 1
 
-    if key == ord('q'):
+    elif key == ord('q'):
         break
 
 cap.release()

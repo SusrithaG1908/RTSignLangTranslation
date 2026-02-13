@@ -6,31 +6,37 @@ from sklearn.metrics import classification_report, confusion_matrix
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
+from pathlib import Path
 
 IMG_SIZE = (128, 128)
 BATCH_SIZE = 32
 
-test_dir = "../data/test"
+# ---- Resolve project root safely ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+TEST_DIR = PROJECT_ROOT / "data" / "test"
+MODEL_PATH = PROJECT_ROOT / "models" / "sign_model.h5"
+LABELS_PATH = PROJECT_ROOT / "models" / "class_labels.json"
 
 test_datagen = ImageDataGenerator(rescale=1./255)
 
 test_gen = test_datagen.flow_from_directory(
-    test_dir,
+    str(TEST_DIR),
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
     class_mode='categorical',
     shuffle=False
 )
 
-model = load_model("../models/sign_model.h5")
+model = load_model(str(MODEL_PATH))
 
-with open("../models/class_labels.json", "r") as f:
+with open(LABELS_PATH, "r") as f:
     class_indices = json.load(f)
 
-class_labels = {v: k for k, v in class_indices.items()}
+class_labels = {int(v): k for k, v in class_indices.items()}
 labels = [class_labels[i] for i in range(len(class_labels))]
 
-preds = model.predict(test_gen)
+preds = model.predict(test_gen, verbose=1)
 y_pred = np.argmax(preds, axis=1)
 y_true = test_gen.classes
 
