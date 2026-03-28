@@ -73,32 +73,6 @@ def preprocess_mediapipe_mobilenet(img_bgr):
 
 # ---- Pipelines ----
 PIPELINES = {
-    # Existing
-    #"CNN_Raw": {
-    #    "model_path": MODELS_DIR / "cnn_raw.h5",
-    #    "labels_path": MODELS_DIR / "class_labels_cnn_raw.json",
-    #    "test_dir": DATA_RAW_TEST,
-    #    "preprocess_fn": preprocess_raw
-    #},
-    #"CNN_MediaPipeCrop": {
-    #    "model_path": MODELS_DIR / "cnn_mp.h5",
-    #    "labels_path": MODELS_DIR / "class_labels_cnn_mp.json",
-    #    "test_dir": DATA_MP_TEST,
-    #    "preprocess_fn": preprocess_mediapipe_cnn
-    #},
-    #"MobileNet_TL_10%": {
-    #    "model_path": MODELS_DIR / "mobilenet_mp_10%.h5",
-    #    "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_10%.json",
-    #    "test_dir": DATA_MP_TEST,
-    #    "preprocess_fn": preprocess_mediapipe_mobilenet
-    #},
-    #"MobileNet_TL_25%": {
-    #    "model_path": MODELS_DIR / "mobilenet_mp_25%.h5",
-    #    "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_25%.json",
-    #    "test_dir": DATA_MP_TEST,
-    #    "preprocess_fn": preprocess_mediapipe_mobilenet
-    #},
-
     # New v2 (robust)
     "CNN_Raw_v2": {
         "model_path": MODELS_DIR / "cnn_raw_v2.h5",

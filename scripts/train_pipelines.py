@@ -29,45 +29,6 @@ MODELS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # =========================
-# ORIGINAL (UNCHANGED)
-# =========================
-def get_generators(data_dir, val_dir, img_size, use_mobilenet_preprocess=False):
-    if use_mobilenet_preprocess:
-        datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
-    else:
-        datagen = ImageDataGenerator(rescale=1./255)
-
-    train_gen = datagen.flow_from_directory(
-        str(data_dir), target_size=img_size, batch_size=BATCH_SIZE, class_mode='categorical'
-    )
-    val_gen = datagen.flow_from_directory(
-        str(val_dir), target_size=img_size, batch_size=BATCH_SIZE, class_mode='categorical', shuffle=False
-    )
-    return train_gen, val_gen
-
-def build_cnn(num_classes, input_shape=(128,128,3)):
-    return models.Sequential([
-        layers.Input(shape=input_shape),
-        layers.Conv2D(32, 3, activation='relu'), layers.MaxPool2D(),
-        layers.Conv2D(64, 3, activation='relu'), layers.MaxPool2D(),
-        layers.Conv2D(128,3, activation='relu'), layers.MaxPool2D(),
-        layers.Flatten(),
-        layers.Dense(256, activation='relu'),
-        layers.Dropout(0.5),
-        layers.Dense(num_classes, activation='softmax')
-    ])
-
-def build_mobilenet(num_classes):
-    base = MobileNetV2(input_shape=(224,224,3), include_top=False, weights="imagenet")
-    base.trainable = False
-    x = base.output
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(128, activation="relu")(x)
-    x = layers.Dropout(0.3)(x)
-    outputs = layers.Dense(num_classes, activation="softmax")(x)
-    return models.Model(inputs=base.input, outputs=outputs), base
-
-# =========================
 # NEW v2 (ROBUST)
 # =========================
 def get_generators_v2(data_dir, val_dir, img_size, use_mobilenet_preprocess=False):
@@ -155,10 +116,7 @@ def train_pipeline(name, train_dir, val_dir, build_fn, img_size,
 
     print(f"\n🚀 Training pipeline: {name}")
 
-    if use_v2:
-        train_gen, val_gen = get_generators_v2(train_dir, val_dir, img_size, use_mobilenet_preprocess)
-    else:
-        train_gen, val_gen = get_generators(train_dir, val_dir, img_size, use_mobilenet_preprocess)
+    train_gen, val_gen = get_generators_v2(train_dir, val_dir, img_size, use_mobilenet_preprocess)
 
     num_classes = train_gen.num_classes
     labels = list(train_gen.class_indices.keys())
@@ -202,16 +160,6 @@ def train_pipeline(name, train_dir, val_dir, build_fn, img_size,
 # MAIN
 # =========================
 if __name__ == "__main__":
-    # Original pipelines (UNCHANGED)
-    #train_pipeline("cnn_raw", DATA_RAW_TRAIN, DATA_RAW_VAL, build_cnn, IMG_SIZE_CNN)
-    #train_pipeline("cnn_mp",  DATA_MP_TRAIN,  DATA_MP_VAL,  build_cnn, IMG_SIZE_CNN)
-
-    #train_pipeline("mobilenet_mp_10%", DATA_MP_TRAIN, DATA_MP_VAL, build_mobilenet,
-    #               IMG_SIZE_MOBILENET, use_mobilenet_preprocess=True, fine_tune=True, fine_tune_ratio=10)
-
-    #train_pipeline("mobilenet_mp_25%", DATA_MP_TRAIN, DATA_MP_VAL, build_mobilenet,
-    #               IMG_SIZE_MOBILENET, use_mobilenet_preprocess=True, fine_tune=True, fine_tune_ratio=25)
-
     # New robust v2 pipelines
     train_pipeline("cnn_raw_v2", DATA_RAW_TRAIN, DATA_RAW_VAL, build_cnn_v2,
                 IMG_SIZE_CNN, use_v2=True)

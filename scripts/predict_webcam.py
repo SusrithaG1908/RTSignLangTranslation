@@ -23,41 +23,8 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 # -------- Pipeline registry --------
 PIPELINES = {
-    "1": {
-        "name": "CNN_Raw",
-        "model_path": MODELS_DIR / "cnn_raw.h5",
-        "labels_path": MODELS_DIR / "class_labels_cnn_raw.json",
-        "img_size": IMG_SIZE_CNN,
-        "use_mediapipe": False,
-        "is_mobilenet": False
-    },
-    "2": {
-        "name": "CNN_MediaPipeCrop",
-        "model_path": MODELS_DIR / "cnn_mp.h5",
-        "labels_path": MODELS_DIR / "class_labels_cnn_mp.json",
-        "img_size": IMG_SIZE_CNN,
-        "use_mediapipe": True,
-        "is_mobilenet": False
-    },
-    "3": {
-        "name": "MobileNet_TL_10%",
-        "model_path": MODELS_DIR / "mobilenet_mp_10%.h5",
-        "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_10%.json",
-        "img_size": IMG_SIZE_MOBILENET,
-        "use_mediapipe": True,
-        "is_mobilenet": True
-    },
-    "4": {
-        "name": "MobileNet_TL_25%",
-        "model_path": MODELS_DIR / "mobilenet_mp_25%.h5",
-        "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_25%.json",
-        "img_size": IMG_SIZE_MOBILENET,
-        "use_mediapipe": True,
-        "is_mobilenet": True
-    },
-
     # ---- New robust v2 pipelines ----
-    "5": {
+    "1": {
         "name": "CNN_Raw_v2",
         "model_path": MODELS_DIR / "cnn_raw_v2.h5",
         "labels_path": MODELS_DIR / "class_labels_cnn_raw_v2.json",
@@ -65,7 +32,7 @@ PIPELINES = {
         "use_mediapipe": False,
         "is_mobilenet": False
     },
-    "6": {
+    "2": {
         "name": "CNN_MediaPipeCrop_v2",
         "model_path": MODELS_DIR / "cnn_mp_v2.h5",
         "labels_path": MODELS_DIR / "class_labels_cnn_mp_v2.json",
@@ -73,7 +40,7 @@ PIPELINES = {
         "use_mediapipe": True,
         "is_mobilenet": False
     },
-    "7": {
+    "3": {
         "name": "MobileNet_TL_10%_v2",
         "model_path": MODELS_DIR / "mobilenet_mp_10%_v2.h5",
         "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_10%_v2.json",
@@ -81,7 +48,7 @@ PIPELINES = {
         "use_mediapipe": True,
         "is_mobilenet": True
     },
-    "8": {
+    "4": {
         "name": "MobileNet_TL_25%_v2",
         "model_path": MODELS_DIR / "mobilenet_mp_25%_v2.h5",
         "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_25%_v2.json",
@@ -97,12 +64,8 @@ print("1️⃣  CNN (Raw ROI)")
 print("2️⃣  CNN + MediaPipe Crop")
 print("3️⃣  MobileNet(10%) + MediaPipe Crop")
 print("4️⃣  MobileNet(25%) + MediaPipe Crop")
-print("5️⃣  CNN (Raw ROI) v2 - robust")
-print("6️⃣  CNN + MediaPipe Crop (v2 - robust)")
-print("7️⃣  MobileNet(10%) + MediaPipe Crop (v2 - robust)")
-print("8️⃣  MobileNet(25%) + MediaPipe Crop (v2 - robust)")
 
-choice = input("Enter choice (1-8): ").strip()
+choice = input("Enter choice (1-4): ").strip()
 if choice not in PIPELINES:
     raise ValueError("❌ Invalid pipeline selection")
 
