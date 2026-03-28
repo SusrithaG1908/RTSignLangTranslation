@@ -23,7 +23,6 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 # -------- Pipeline registry --------
 PIPELINES = {
-    # ---- New robust v2 pipelines ----
     "1": {
         "name": "CNN_Raw_v2",
         "model_path": MODELS_DIR / "cnn_raw_v2.h5",
@@ -111,19 +110,22 @@ def crop_with_mediapipe(img_bgr):
     crop_bgr = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR)
     return crop_bgr, used_mp, mp_box
 
-# -------- TTS setup (Non-blocking) --------
+# -------- TTS setup (FIXED) --------
+engine = pyttsx3.init()
+engine.setProperty('rate', 160)
+engine.setProperty('volume', 1.0)
+
+tts_lock = threading.Lock()
+
 def speak_async(text):
     def _speak():
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 160)
-        engine.setProperty('volume', 1.0)
-        engine.say(text)
-        engine.runAndWait()
-        engine.stop()
+        with tts_lock:  # ✅ prevents concurrent run loops
+            engine.say(text)
+            engine.runAndWait()
     threading.Thread(target=_speak, daemon=True).start()
 
 last_spoken_time = 0
-SPEAK_COOLDOWN = 0.6  # seconds
+SPEAK_COOLDOWN = 0.6
 
 cap = cv2.VideoCapture(0)
 
