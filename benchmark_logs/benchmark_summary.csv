@@ -1,0 +1,5 @@
+Model,Accuracy_%,Avg_Confidence,Avg_Latency_ms,Samples
+CNN_Raw_v2,99.17,0.985,74.58,13050
+CNN_MediaPipeCrop_v2,93.2,0.929,77.73,13050
+MobileNet_TL_10%_v2,89.62,0.94,104.89,13050
+MobileNet_TL_25%_v2,94.64,0.967,113.63,13050
