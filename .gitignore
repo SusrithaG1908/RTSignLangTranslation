@@ -50,3 +50,8 @@ captured_frames/
 test_images/
 cropped_images/
 test.py
+
+streamlit_env/
+.venv/
+__pycache__/
+*.pyc
