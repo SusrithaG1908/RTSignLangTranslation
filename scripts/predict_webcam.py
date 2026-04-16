@@ -1,222 +1,113 @@
+"""
+predict_webcam.py
+Real-time ASL sign-language translation via webcam.
+
+Uses:  HandCropper · ImagePreprocessor · SignClassifier
+       WordBuilder  · TTSSpeaker        · PipelineRegistry
+"""
+
+import sys
 import cv2
 import numpy as np
-import json
-import time
 from pathlib import Path
-from tensorflow.keras.models import load_model
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-import mediapipe as mp
-from collections import deque
-import pyttsx3
-import threading
 
-# -------- Resolve project root safely --------
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.pipeline_config import PipelineRegistry
+from core.hand_cropper import HandCropper
+from core.preprocessor import ImagePreprocessor
+from core.classifier import SignClassifier
+from core.word_builder import WordBuilder
+from core.tts_speaker import TTSSpeaker
+
+# ---- Project layout ----
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
 SAVE_DIR = PROJECT_ROOT / "captured_frames"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-IMG_SIZE_CNN = (128, 128)
-IMG_SIZE_MOBILENET = (224, 224)
+# Fallback ROI when MediaPipe is disabled or fails
+FALLBACK_ROI = (50, 350, 50, 350)   # y1, y2, x1, x2
 
-MODELS_DIR = PROJECT_ROOT / "models"
 
-# -------- Pipeline registry --------
-PIPELINES = {
-    "1": {
-        "name": "CNN_Raw_v2",
-        "model_path": MODELS_DIR / "cnn_raw_v2.h5",
-        "labels_path": MODELS_DIR / "class_labels_cnn_raw_v2.json",
-        "img_size": IMG_SIZE_CNN,
-        "use_mediapipe": False,
-        "is_mobilenet": False
-    },
-    "2": {
-        "name": "CNN_MediaPipeCrop_v2",
-        "model_path": MODELS_DIR / "cnn_mp_v2.h5",
-        "labels_path": MODELS_DIR / "class_labels_cnn_mp_v2.json",
-        "img_size": IMG_SIZE_CNN,
-        "use_mediapipe": True,
-        "is_mobilenet": False
-    },
-    "3": {
-        "name": "MobileNet_TL_10%_v2",
-        "model_path": MODELS_DIR / "mobilenet_mp_10%_v2.h5",
-        "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_10%_v2.json",
-        "img_size": IMG_SIZE_MOBILENET,
-        "use_mediapipe": True,
-        "is_mobilenet": True
-    },
-    "4": {
-        "name": "MobileNet_TL_25%_v2",
-        "model_path": MODELS_DIR / "mobilenet_mp_25%_v2.h5",
-        "labels_path": MODELS_DIR / "class_labels_mobilenet_mp_25%_v2.json",
-        "img_size": IMG_SIZE_MOBILENET,
-        "use_mediapipe": True,
-        "is_mobilenet": True
-    }
-}
+def main():
+    registry = PipelineRegistry(PROJECT_ROOT)
+    registry.print_menu()
 
-# -------- Prompt user --------
-print("\nSelect pipeline:")
-print("1️⃣  CNN (Raw ROI)")
-print("2️⃣  CNN + MediaPipe Crop")
-print("3️⃣  MobileNet(10%) + MediaPipe Crop")
-print("4️⃣  MobileNet(25%) + MediaPipe Crop")
+    choice = input("Enter choice (1-4): ").strip()
+    cfg = registry.get_by_number(choice)
+    print(f"\n🚀 Using pipeline: {cfg.name}")
 
-choice = input("Enter choice (1-4): ").strip()
-if choice not in PIPELINES:
-    raise ValueError("❌ Invalid pipeline selection")
+    # ---- Build pipeline components ----
+    classifier   = SignClassifier(cfg.model_path, cfg.labels_path)
+    preprocessor = ImagePreprocessor(img_size=cfg.img_size, mode=cfg.preprocess_mode)
+    word_builder = WordBuilder(buffer_size=6, min_confidence=0.9)
+    speaker      = TTSSpeaker()
 
-cfg = PIPELINES[choice]
-print(f"\n🚀 Using pipeline: {cfg['name']}")
+    cropper = None
+    if cfg.use_mediapipe:
+        cropper = HandCropper(static_image_mode=False, min_detection_confidence=0.5)
 
-# -------- Load model + labels --------
-model = load_model(str(cfg["model_path"]))
+    cap = cv2.VideoCapture(0)
+    y1_fb, y2_fb, x1_fb, x2_fb = FALLBACK_ROI
+    print("\n📝 Live recognised word: ")
 
-with open(cfg["labels_path"], "r") as f:
-    class_indices = json.load(f)
-class_labels = {int(v): k for k, v in class_indices.items()}
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("❌ Failed to read from webcam")
+                break
 
-# -------- MediaPipe setup --------
-hands = None
-if cfg["use_mediapipe"]:
-    mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+            frame = cv2.flip(frame, 1)
+            bbox = None
 
-def crop_with_mediapipe(img_bgr):
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    results = hands.process(img_rgb)
-    h, w, _ = img_rgb.shape
+            if cropper is not None:
+                crop_result = cropper.crop(frame)
+                roi_bgr = crop_result.image_bgr
+                bbox = crop_result.bounding_box
+                if not crop_result.used_mediapipe:
+                    roi_bgr = frame[y1_fb:y2_fb, x1_fb:x2_fb]
+            else:
+                roi_bgr = frame[y1_fb:y2_fb, x1_fb:x2_fb]
 
-    if results.multi_hand_landmarks:
-        xs, ys = [], []
-        for lm in results.multi_hand_landmarks[0].landmark:
-            xs.append(int(lm.x * w))
-            ys.append(int(lm.y * h))
-        pad = 30
-        x1 = max(min(xs) - pad, 0)
-        y1 = max(min(ys) - pad, 0)
-        x2 = min(max(xs) + pad, w)
-        y2 = min(max(ys) + pad, h)
-        crop_rgb = img_rgb[y1:y2, x1:x2]
-        used_mp = True
-        mp_box = (x1, y1, x2, y2)
-    else:
-        crop_rgb = img_rgb[int(0.2*h):int(0.9*h), int(0.2*w):int(0.9*w)]
-        used_mp = False
-        mp_box = None
+            prep   = preprocessor.process(roi_bgr)
+            pred   = classifier.predict(prep.batch)
+            state  = word_builder.update(pred.label, pred.confidence)
 
-    crop_bgr = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR)
-    return crop_bgr, used_mp, mp_box
+            if state.new_char_committed:
+                committed = state.last_committed_char
+                if committed.lower() == "space":
+                    if state.completed_word:
+                        speaker.speak(state.completed_word)
+                else:
+                    speaker.speak(committed)
+                print(f"\r📝 Word: {state.current_word}", end="", flush=True)
 
-# -------- TTS setup (FIXED) --------
-engine = pyttsx3.init()
-engine.setProperty('rate', 160)
-engine.setProperty('volume', 1.0)
+            # ---- Draw overlays ----
+            if bbox:
+                cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 0, 0), 2)
+            else:
+                cv2.rectangle(frame, (x1_fb, y1_fb), (x2_fb, y2_fb), (0, 255, 0), 2)
 
-tts_lock = threading.Lock()
+            tag = f"{pred.label} ({pred.confidence:.2f}) | {cfg.name}"
+            cv2.putText(frame, tag, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            cv2.imshow("Sign Language Translator", frame)
 
-def speak_async(text):
-    def _speak():
-        with tts_lock:  # ✅ prevents concurrent run loops
-            engine.say(text)
-            engine.runAndWait()
-    threading.Thread(target=_speak, daemon=True).start()
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                print("\n👋 Exiting…")
+                break
+            if key == ord("r"):
+                word_builder.reset()
+                print("\n🔄 Word reset")
 
-last_spoken_time = 0
-SPEAK_COOLDOWN = 0.6
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        speaker.stop()
+        if cropper:
+            cropper.close()
 
-cap = cv2.VideoCapture(0)
 
-# -------- Word builder state --------
-last_char = None
-stable_buffer = deque(maxlen=6)
-current_word = ""
-
-print("\n📝 Live recognized word: ")
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("❌ Failed to read from webcam")
-        break
-
-    frame = cv2.flip(frame, 1)
-
-    x1, y1, x2, y2 = 50, 50, 350, 350
-    roi_fallback = frame[y1:y2, x1:x2]
-
-    if cfg["use_mediapipe"]:
-        roi_used, used_mp, mp_box = crop_with_mediapipe(frame)
-        if not used_mp:
-            roi_used = roi_fallback
-    else:
-        roi_used = roi_fallback
-        mp_box = None
-
-    roi_rgb = cv2.cvtColor(roi_used, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(roi_rgb, cfg["img_size"])
-
-    if cfg["is_mobilenet"]:
-        img = preprocess_input(img.astype(np.float32))
-    else:
-        img = img / 255.0
-
-    img = np.expand_dims(img, axis=0)
-
-    preds = model.predict(img, verbose=0)[0]
-    pred_class = int(np.argmax(preds))
-    confidence = float(np.max(preds))
-    label = class_labels.get(pred_class, "Unknown")
-
-    if confidence >= 0.8:
-        stable_buffer.append(label)
-    else:
-        stable_buffer.clear()
-
-    if len(stable_buffer) == stable_buffer.maxlen:
-        stable_label = max(set(stable_buffer), key=stable_buffer.count)
-
-        if stable_label != last_char:
-            last_char = stable_label
-            speak_text = stable_label
-
-            if stable_label.lower() == "space":
-                stable_label = " "
-                speak_text = "space"
-            if stable_label.lower() == "nothing":
-                stable_label = ""
-                speak_text = ""
-
-            current_word += stable_label
-            print(f"\r📝 Word: {current_word}", end="", flush=True)
-
-            now = time.time()
-            if now - last_spoken_time > SPEAK_COOLDOWN:
-                speak_async(speak_text)
-                last_spoken_time = now
-
-    if mp_box:
-        cv2.rectangle(frame, (mp_box[0], mp_box[1]), (mp_box[2], mp_box[3]), (255, 0, 0), 2)
-    else:
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-    tag = f"{label} ({confidence:.2f}) | {cfg['name']}"
-    cv2.putText(frame, tag, (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-    cv2.imshow("Sign Language Translator (Word Builder + Audio)", frame)
-
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        print("\n👋 Exiting...")
-        break
-    if key == ord('r'):
-        current_word = ""
-        last_char = None
-        stable_buffer.clear()
-        print("\n🔄 Word reset")
-
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()

@@ -63,17 +63,23 @@ sign_language_translator/
 │   ├── sign_model.h5
 │   └── class_labels.json
 │
-├── scripts/
+├── core/                        ← shared classes (import from here)
+│   ├── __init__.py              ← re-exports everything
+│   ├── hand_cropper.py          ← HandCropper + CropResult
+│   ├── preprocessor.py          ← ImagePreprocessor + PreprocessResult
+│   ├── classifier.py            ← SignClassifier + Prediction
+│   ├── pipeline_config.py       ← PipelineConfig + PipelineRegistry
+│   ├── dataset.py               ← DatasetDownloader + DatasetOrganizer
+│   ├── tts_speaker.py           ← TTSSpeaker
+│   └── word_builder.py          ← WordBuilder + WordBuilderState
+└── scripts/                     ← thin entry-point scripts
 │   ├── download_and_prepare_dataset.py
-│   ├── collect_data.py
 │   ├── crop_existing_dataset_with_mediapipe.py
-│   ├── preprocess.py
-│   ├── train_model.py
-│   ├── evaluate_model.py
-│   ├── predict_webcam.py
 │   ├── crop_input_image_with_mediapipe.py
+│   ├── train_pipelines.py
+│   ├── benchmark_pipelines.py
 │   ├── predict_single_image.py
-│   └── app.py
+│   └── predict_webcam.py
 │
 ├── requirements.txt
 └── README.md
@@ -230,8 +236,9 @@ Classification Report:
        space       0.25      0.90      0.39       837
 
     accuracy                           0.54     24096
-   macro avg       0.63      0.54      0.55     24096
-weighted avg       0.63      0.54      0.55     24096
+
+macro avg 0.63 0.54 0.55 24096
+weighted avg 0.63 0.54 0.55 24096
 
 Confusion Matrix:
 ![alt text](reports/Figure_3_confusionmatrix_withMediaPipe.png)
