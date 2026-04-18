@@ -16,6 +16,16 @@ Streamlit  |  Light & Dark Mode  |  Montserrat font
 ║    Mac/Linux: RUN_MODE=browser streamlit run scripts/app.py                 ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
+import os
+
+# Detect Hugging Face (or any cloud)
+IS_CLOUD = os.environ.get("SPACE_ID") is not None
+
+# Fix MediaPipe + TensorFlow for cloud only
+if IS_CLOUD:
+    # Force MediaPipe to use CPU (critical for Hugging Face)
+    os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -293,14 +303,43 @@ IMG_SIZE    = 224
 CONF_THRESH = 0.70
 STABILITY_N = 8
 
-RTC_CONFIGURATION = {
-    "iceServers": [
-        {"urls": ["stun:stun.l.google.com:19302"]},
-        {"urls": ["stun:stun1.l.google.com:19302"]},
-        {"urls": ["stun:stun2.l.google.com:19302"]},
-        {"urls": ["stun:stun3.l.google.com:19302"]},
-    ]
-}
+if IS_CLOUD:
+    # Cloud → needs TURN
+    RTC_CONFIGURATION = {
+        "iceServers": [
+            # STUN (discovery)
+            {"urls": "stun:stun.l.google.com:19302"},
+
+            # TURN (UDP)
+            {
+                "urls": "turn:openrelay.metered.ca:80",
+                "username": "openrelayproject",
+                "credential": "openrelayproject",
+            },
+
+            # TURN (TCP fallback)
+            {
+                "urls": "turn:openrelay.metered.ca:443?transport=tcp",
+                "username": "openrelayproject",
+                "credential": "openrelayproject",
+            },
+
+            # TURN (TLS fallback - most reliable)
+            {
+                "urls": "turns:openrelay.metered.ca:443",
+                "username": "openrelayproject",
+                "credential": "openrelayproject",
+            },
+        ],
+
+        # Force relay (VERY IMPORTANT for Hugging Face)
+        "iceTransportPolicy": "relay",
+    }
+else:
+    # Local → STUN is enough
+    RTC_CONFIGURATION = {
+        "iceServers": [{"urls": "stun:stun.l.google.com:19302"}]
+    }
 
 # run_mode is determined entirely by IS_CLOUD — no user selection locally
 
@@ -568,6 +607,22 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+
+# ===================== WEBRTC TEST MODE =====================
+if IS_CLOUD:
+    test_mode = st.selectbox("Select Mode", ["Full App", "WebRTC Test"])
+
+    if test_mode == "WebRTC Test":
+        st.write("Testing camera only (no ML model)")
+
+        webrtc_streamer(
+            key="test",
+            rtc_configuration=RTC_CONFIGURATION
+        )
+
+        st.stop()
+# ===========================================================
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  ERROR BANNERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -692,27 +747,37 @@ with col_vid:
             rtc_configuration=RTC_CONFIGURATION,
             video_processor_factory=SignLanguageProcessor,
             media_stream_constraints={
-                "video": {"width": {"ideal": 1280}, "height": {"ideal": 720}},
+                "video": {
+                    "width": 640,
+                    "height": 480,
+                    "frameRate": 15,   # 🔥 IMPORTANT (reduces lag)
+                },
                 "audio": False,
             },
             async_processing=True,
+            # 🔥 NEW (stability)
+            video_html_attrs={
+                "autoPlay": True,
+                "playsInline": True,
+                "muted": True,
+            },
             translations={
                 "start": "▶ Start Camera",
                 "stop":  "⏹ Stop Camera",
             },
         )
         if ctx.state.playing and ctx.video_processor:
-            while ctx.state.playing:
-                result = ctx.video_processor.result
-                char = result.get("char", "–")
-                conf = result.get("conf", 0.0)
-                word = result.get("word", "")
-                st.session_state.last_char = char
-                st.session_state.last_conf = conf
-                st.session_state.word      = word
-                render_char_conf(char, conf)
-                render_word(word)
-                time.sleep(0.10)
+            result = ctx.video_processor.result
+            char = result.get("char", "–")
+            conf = result.get("conf", 0.0)
+            word = result.get("word", "")
+
+            st.session_state.last_char = char
+            st.session_state.last_conf = conf
+            st.session_state.word      = word
+
+            render_char_conf(char, conf)
+            render_word(word)
 
     else:
         # Local OpenCV mode — mirrors snapshot mode structure exactly:
