@@ -1,3 +1,21 @@
+---
+title: Real-Time Sign Language Translator
+emoji: 🤟
+colorFrom: purple
+colorTo: blue
+sdk: docker
+app_port: 8501
+tags:
+  - streamlit
+  - sign-language
+  - computer-vision
+  - mediapipe
+  - tensorflow
+  - webrtc
+license: mit
+short_description: Real-time ASL sign language recognition using MobileNetV2
+---
+
 # 🤟 Real-Time Sign Language Translation System
 
 An AI-powered **Sign Language Translator** that recognizes ASL hand gestures from a webcam and converts them into **text** and **speech** in real time. Built using **MediaPipe** hand localization, **MobileNetV2** transfer learning, and **temporal smoothing** — achieving **95.3% top-1 accuracy** on a 36-class dataset without GPU acceleration.
