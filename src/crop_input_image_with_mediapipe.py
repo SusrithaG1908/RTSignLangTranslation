@@ -7,9 +7,7 @@ import sys
 import cv2
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from core.hand_cropper import HandCropper
+from src.core.hand_cropper import HandCropper
 
 # ---- Project layout ----
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

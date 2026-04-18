@@ -11,14 +11,12 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from core.pipeline_config import PipelineRegistry
-from core.hand_cropper import HandCropper
-from core.preprocessor import ImagePreprocessor
-from core.classifier import SignClassifier
-from core.word_builder import WordBuilder
-from core.tts_speaker import TTSSpeaker
+from src.core.pipeline_config import PipelineRegistry
+from src.core.hand_cropper import HandCropper
+from src.core.preprocessor import ImagePreprocessor
+from src.core.classifier import SignClassifier
+from src.core.word_builder import WordBuilder
+from src.core.tts_speaker import TTSSpeaker
 
 # ---- Project layout ----
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -11,8 +11,6 @@ import seaborn as sns
 import tensorflow as tf
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 from tensorflow.keras import layers, models, regularizers
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input

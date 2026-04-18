@@ -9,9 +9,7 @@ Install Kaggle CLI and place your API token at ~/.kaggle/kaggle.json.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from core.dataset import DatasetDownloader, DatasetOrganizer
+from src.core.dataset import DatasetDownloader, DatasetOrganizer
 
 # ---- Project layout ----
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
