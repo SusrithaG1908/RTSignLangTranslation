@@ -16,8 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
-COPY models/mobilenet_mp_25%_v2_best.h5 ./models/mobilenet_mp_25%_v2_best.h5
-COPY models/class_labels_mobilenet_mp_25%_v2.json ./models/class_labels_mobilenet_mp_25%_v2.json
+COPY models/ ./models/
 
 USER appuser
 
