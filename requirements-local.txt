@@ -1,0 +1,76 @@
+# =============================================================================
+#  requirements-local.txt  —  LOCAL DEVELOPMENT
+#  Install with: pip install -r requirements-local.txt
+#
+#  Key differences from requirements.txt (cloud):
+#    opencv-contrib-python   instead of  opencv-python-headless (full GUI build)
+#    tensorflow-intel added  (Intel CPU optimisation for Windows/Linux dev machines)
+#    pyttsx3 added           (local OS audio drivers for TTS)
+#    sounddevice added       (audio I/O, useful for local experimentation)
+#    kaggle / kagglesdk added (dataset download scripts)
+#    tensorflow-io-gcs-filesystem added (GCS dataset access if needed locally)
+#    streamlit-webrtc / aiortc / av still included — local runs use WebRTC too
+# =============================================================================
+
+# ── Core ML ──────────────────────────────────────────────────────────────────
+tensorflow==2.15.0
+tensorflow-intel==2.15.0          # Intel-optimised CPU kernels (Windows / Linux)
+tensorflow-estimator==2.15.0
+tensorflow-io-gcs-filesystem==0.31.0
+keras==2.15.0
+
+# ── Computer Vision ──────────────────────────────────────────────────────────
+mediapipe==0.10.9
+
+# full build: includes GUI windows, VideoCapture, contrib modules
+opencv-contrib-python==4.9.0.80
+
+numpy==1.26.4
+
+# ── Streamlit + WebRTC ───────────────────────────────────────────────────────
+streamlit>=1.32.0
+streamlit-webrtc==0.47.9
+aiortc==1.9.0
+av==12.3.0
+
+# ── TTS (local only) ─────────────────────────────────────────────────────────
+# On cloud, TTS is handled by the browser's Web Speech API (no package needed).
+# Locally, pyttsx3 uses the OS audio drivers (Windows SAPI / macOS NSSpeech / Linux eSpeak).
+pyttsx3==2.99
+sounddevice==0.5.5
+
+# ── Dataset tools (local only) ───────────────────────────────────────────────
+kaggle==2.0.0
+kagglesdk==0.1.15
+
+# ── Data / utilities ─────────────────────────────────────────────────────────
+scikit-learn==1.8.0
+matplotlib==3.10.8
+seaborn==0.13.2
+pandas==3.0.0
+pillow==12.1.1
+requests==2.32.5
+tqdm==4.67.3
+
+# ── Pinned transitive deps ────────────────────────────────────────────────────
+absl-py==2.4.0
+astunparse==1.6.3
+flatbuffers==25.12.19
+gast==0.7.0
+google-auth==2.48.0
+google-auth-oauthlib==1.2.4
+google-pasta==0.2.0
+grpcio==1.78.0
+h5py==3.15.1
+ml-dtypes==0.2.0
+oauthlib==3.3.1
+opt_einsum==3.4.0
+protobuf==3.20.3
+pyasn1==0.6.2
+pyasn1_modules==0.4.2
+requests-oauthlib==2.0.0
+rsa==4.9.1
+tensorboard==2.15.2
+tensorboard-data-server==0.7.2
+termcolor==3.3.0
+wrapt==1.14.2

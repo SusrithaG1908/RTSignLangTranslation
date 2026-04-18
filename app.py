@@ -1,21 +1,36 @@
-
-
 """
-Real-Time Sign Language Translator  ·  v3.0
+Real-Time Sign Language Translator  ·  v7.0
 Streamlit  |  Light & Dark Mode  |  Montserrat font
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ENVIRONMENT VARIABLES                                                       ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  RUN_MODE        "local" (default) | "browser"                              ║
+║  CAMERA_INDEX    Camera device index for local mode. Default "0".           ║
+║  RENDER          Auto-set by Render → forces browser mode                   ║
+║  SPACE_ID        Auto-set by Hugging Face → forces browser mode             ║
+║  PYTHON_VERSION  Set to "3.11.0" in Render env vars panel                  ║
+║                                                                              ║
+║  Test browser mode locally:                                                  ║
+║    Windows  : set RUN_MODE=browser && streamlit run scripts/app.py          ║
+║    Mac/Linux: RUN_MODE=browser streamlit run scripts/app.py                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import cv2
 import numpy as np
 import json
-import time
 import threading
+import time
 import os
 import importlib
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  PAGE CONFIG
+#  PAGE CONFIG  (must be first Streamlit call)
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Sign Language Translator",
@@ -25,18 +40,30 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  ENVIRONMENT DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+def _detect_run_mode() -> str:
+    if os.getenv("RENDER") == "true" or os.getenv("SPACE_ID") is not None:
+        return "browser"
+    return os.getenv("RUN_MODE", "local").lower()
+
+RUN_MODE = _detect_run_mode()
+IS_CLOUD = RUN_MODE == "browser"
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
 _DEFAULTS = {
-    "word":        "",
-    "history":     [],
-    "last_char":   "–",
-    "last_conf":   0.0,
-    "stable_buf":  [],
-    "run_camera":  False,
-    "frame_count": 0,
-    "dark_mode":   True,
-    "mirror":      True,
+    "word":         "",
+    "history":      [],
+    "last_char":    "–",
+    "last_conf":    0.0,
+    "stable_buf":   [],
+    "run_camera":   False,
+    "frame_count":  0,
+    "dark_mode":    True,
+    "mirror":       True,
+    "run_mode":     RUN_MODE,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -68,7 +95,6 @@ DARK = {
     "prog_bg":     "#38346a",
     "overlay_hex": "#a78bfa",
 }
-
 LIGHT = {
     "bg":          "#fdf6ec",
     "bg2":         "#fef9f0",
@@ -92,7 +118,6 @@ LIGHT = {
     "prog_bg":     "#f0d9b5",
     "overlay_hex": "#d97706",
 }
-
 T = DARK if st.session_state.dark_mode else LIGHT
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +126,6 @@ T = DARK if st.session_state.dark_mode else LIGHT
 def inject_css(t):
     st.markdown(f"""
 <style>
-/* Montserrat replaces Outfit/Syne everywhere */
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap');
 
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -119,81 +143,65 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
 ::-webkit-scrollbar-thumb {{ background: {t['border']}; border-radius: 3px; }}
 
 /* ── TOP BAR ── */
-.topbar-left {{ display: flex; align-items: center; gap: 10px; padding-top: 0.4rem; }}
+.topbar-left {{ display: flex; align-items: center; gap: 10px; padding-top: 0.4rem; flex-wrap: wrap; }}
 .app-logo {{ font-size: 2rem; line-height: 1; filter: drop-shadow(0 0 8px {t['accent_glow']}); }}
-.app-name {{
-    font-family: 'Montserrat', sans-serif; font-size: 1.1rem; font-weight: 800;
-    letter-spacing: -0.3px; color: {t['text']};
-}}
+.app-name {{ font-family: 'Montserrat', sans-serif; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.3px; color: {t['text']}; }}
 .app-name span {{ color: {t['accent']}; }}
+.env-badge {{
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    padding: 0.2rem 0.7rem; border-radius: 50px;
+    background: {t['chip_bg']}; color: {t['chip_text']}; border: 1px solid {t['border']}; white-space: nowrap;
+}}
 
-/* ── HERO — no badge, no subtitle ── */
-.hero {{
-    text-align: center; padding: 1.2rem 0 1.8rem;
-    animation: fadeDown 0.55s ease both;
-}}
-@keyframes fadeDown {{
-    from {{ opacity:0; transform:translateY(-16px); }}
-    to   {{ opacity:1; transform:translateY(0); }}
-}}
+/* ── HERO ── */
+.hero {{ text-align: center; padding: 1rem 0 1.4rem; animation: fadeDown 0.55s ease both; }}
+@keyframes fadeDown {{ from {{ opacity:0; transform:translateY(-16px); }} to {{ opacity:1; transform:translateY(0); }} }}
 .hero h1 {{
     font-family: 'Montserrat', sans-serif;
-    font-size: clamp(1.9rem, 4vw, 3.1rem); font-weight: 900;
+    font-size: clamp(1.6rem, 3.5vw, 2.8rem); font-weight: 900;
     line-height: 1.12; letter-spacing: -1px; color: {t['text']}; margin-bottom: 0;
 }}
 .hero h1 span {{ color: {t['title_span']}; }}
 
-/* ── CARD ── */
-.card {{
-    background: transparent !important;   /* 🔥 removes purple block */
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
+/* ── LAYOUT ── */
+.clean-card {{ background: transparent !important; padding: 0 !important; margin: 0 !important; }}
+
+/* ── VIDEO AREA ── */
+.video-off {{
+    background: {t['surface2']}; border: 2px dashed {t['border']}; border-radius: 14px;
+    height: 420px; width: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 0.55rem; color: {t['text_muted']};
+    box-sizing: border-box;
 }}
-@keyframes fadeUp {{
-    from {{ opacity:0; transform:translateY(14px); }}
-    to   {{ opacity:1; transform:translateY(0); }}
+.video-off .icon {{ font-size: 3.5rem; opacity: 0.5; }}
+.video-off .msg  {{ font-weight: 700; font-size: 0.95rem; }}
+.video-off .sub  {{ font-size: 0.8rem; opacity: 0.65; }}
+
+[data-testid="stImage"] img {{
+    border-radius: 14px !important; width: 100% !important;
+    max-height: 520px !important; object-fit: cover !important; display: block !important;
+}}
+div[data-testid="stCustomComponentV1"] > iframe {{
+    width: 100% !important; min-height: 420px !important;
+    border-radius: 14px !important; border: none !important;
+}}
+video {{
+    width: 100% !important; max-height: 520px !important;
+    border-radius: 14px !important; object-fit: cover !important;
+    background: {t['bg2']};
 }}
 
-.clean-card {{
-    background: {t['surface']};
-    border-radius: 16px;
-    padding: 1rem;
-}}
-
-.clean-card {{
-    background: transparent !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}}
-.card-title {{
-    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 1.5px; color: {t['text_muted']};
-}}
-
-/* ── LIVE DOT (kept for the card-title area only) ── */
+/* ── LIVE DOT ── */
 .live-dot-inline {{
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: {t['live_dot']}; margin-right: 6px;
-    animation: livePulse 1.6s ease-in-out infinite;
-    vertical-align: middle;
+    animation: livePulse 1.6s ease-in-out infinite; vertical-align: middle;
 }}
 @keyframes livePulse {{
     0%   {{ box-shadow: 0 0 0 0   rgba(52,211,153,0.7); }}
     70%  {{ box-shadow: 0 0 0 7px rgba(52,211,153,0); }}
     100% {{ box-shadow: 0 0 0 0   rgba(52,211,153,0); }}
 }}
-
-/* ── VIDEO OFF PLACEHOLDER ── */
-.video-off {{
-    background: {t['surface2']}; border: 2px dashed {t['border']}; border-radius: 14px;
-    height: 340px; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 0.55rem; color: {t['text_muted']};
-}}
-.video-off .icon {{ font-size: 3.5rem; opacity: 0.5; }}
-.video-off .msg  {{ font-weight: 700; font-size: 0.95rem; }}
-.video-off .sub  {{ font-size: 0.8rem; opacity: 0.65; }}
-[data-testid="stImage"] img {{ border-radius: 14px !important; width: 100% !important; display: block; }}
 
 /* ── CHARACTER PANEL ── */
 .char-panel {{
@@ -215,22 +223,13 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
     color: {t['accent']}; line-height: 1; text-shadow: 0 0 40px {t['accent_glow']};
     animation: charPop 0.2s cubic-bezier(.34,1.56,.64,1) both;
 }}
-@keyframes charPop {{
-    from {{ transform: scale(0.65); opacity: 0; }}
-    to   {{ transform: scale(1);    opacity: 1; }}
-}}
+@keyframes charPop {{ from {{ transform: scale(0.65); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}
 
 /* ── CONFIDENCE BAR ── */
 .conf-wrap {{ margin-bottom: 0.9rem; }}
 .conf-row {{ display: flex; align-items: center; gap: 10px; }}
-.conf-row-label {{
-    font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.8px; color: {t['text_muted']}; flex-shrink: 0; width: 80px;
-}}
-.conf-track {{
-    flex: 1; height: 8px; background: {t['prog_bg']};
-    border-radius: 50px; overflow: hidden; border: 1px solid {t['border']};
-}}
+.conf-row-label {{ font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: {t['text_muted']}; flex-shrink: 0; width: 80px; }}
+.conf-track {{ flex: 1; height: 8px; background: {t['prog_bg']}; border-radius: 50px; overflow: hidden; border: 1px solid {t['border']}; }}
 .conf-fill {{ height: 100%; border-radius: 50px; transition: width 0.45s cubic-bezier(.4,0,.2,1); }}
 .conf-pct {{ font-size: 0.82rem; font-weight: 700; min-width: 36px; text-align: right; }}
 
@@ -245,79 +244,39 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
     width: 80px; height: 80px; background: rgba(255,255,255,0.09);
     border-radius: 50%; filter: blur(18px); pointer-events: none;
 }}
-.word-box .wlabel {{
-    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 1.4px; color: rgba(255,255,255,0.65); margin-bottom: 0.4rem;
-}}
-.word-text {{
-    font-family: 'Montserrat', sans-serif; font-size: 2.6rem; font-weight: 900;
-    color: #fff; letter-spacing: 0.12em; min-height: 3.2rem;
-    word-break: break-all; text-shadow: 0 2px 12px rgba(0,0,0,0.2); transition: all 0.2s ease;
-}}
+.word-box .wlabel {{ font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; color: rgba(255,255,255,0.65); margin-bottom: 0.4rem; }}
+.word-text {{ font-family: 'Montserrat', sans-serif; font-size: 2.6rem; font-weight: 900; color: #fff; letter-spacing: 0.12em; min-height: 3.2rem; word-break: break-all; text-shadow: 0 2px 12px rgba(0,0,0,0.2); transition: all 0.2s ease; }}
 
-/* ── BUTTONS — base style ── */
+/* ── BUTTONS ── */
 .stButton > button {{
     font-family: 'Montserrat', sans-serif !important; font-weight: 700 !important;
     font-size: 0.86rem !important; border-radius: 50px !important;
-    padding: 0.52rem 1.3rem !important;
-    border: 2px solid {t['border']} !important;
+    padding: 0.52rem 1.3rem !important; border: 2px solid {t['border']} !important;
     background: {t['surface']} !important; color: {t['text']} !important;
     transition: all 0.22s cubic-bezier(.4,0,.2,1) !important; box-shadow: none !important;
 }}
 .stButton > button:hover {{
-    transform: translateY(-2px) scale(1.04) !important;
-    box-shadow: {t['btn_shadow']} !important;
-    border-color: {t['accent']} !important; color: {t['accent']} !important;
-    background: {t['surface2']} !important;
+    transform: translateY(-2px) scale(1.04) !important; box-shadow: {t['btn_shadow']} !important;
+    border-color: {t['accent']} !important; color: {t['accent']} !important; background: {t['surface2']} !important;
 }}
 .stButton > button:active {{ transform: scale(0.97) !important; }}
+div.btn-start button {{ background-color: #22c55e !important; color: white !important; border: none !important; }}
+div.btn-stop  button {{ background-color: #ef4444 !important; color: white !important; border: none !important; }}
 
-/* START BUTTON - FORCE GREEN */
-div.btn-start button[kind="secondary"],
-div.btn-start button {{
-    background-color: #22c55e !important;
-    color: white !important;
-    border: none !important;
-}}
-
-/* STOP BUTTON - FORCE RED */
-div.btn-stop button[kind="secondary"],
-div.btn-stop button {{
-    background-color: #ef4444 !important;
-    color: white !important;
-    border: none !important;
-}}
-/* ── Toggle / Select ── */
-[data-testid="stToggle"] label {{
-    color: {t['text']} !important; font-family: 'Montserrat', sans-serif !important;
-    font-size: 0.85rem !important; font-weight: 700 !important;
-}}
-[data-testid="stSelectbox"] > div > div {{
-    background: {t['surface']} !important; border-color: {t['border']} !important;
-    border-radius: 12px !important; color: {t['text']} !important;
-    font-family: 'Montserrat', sans-serif !important;
-}}
+/* ── Toggles / Selects ── */
+[data-testid="stToggle"] label {{ color: {t['text']} !important; font-family: 'Montserrat', sans-serif !important; font-size: 0.85rem !important; font-weight: 700 !important; }}
+[data-testid="stSelectbox"] label {{ color: {t['text_muted']} !important; font-family: 'Montserrat', sans-serif !important; font-size: 0.72rem !important; font-weight: 700 !important; text-transform: uppercase; letter-spacing: 1px; }}
+[data-testid="stSelectbox"] > div > div {{ background: {t['surface']} !important; border-color: {t['border']} !important; border-radius: 10px !important; color: {t['text']} !important; font-family: 'Montserrat', sans-serif !important; font-weight: 600 !important; }}
 
 /* ── History chips ── */
 .hist-wrap {{ display: flex; flex-wrap: wrap; gap: 7px; margin-top: 0.4rem; }}
-.hist-chip {{
-    background: {t['chip_bg']}; border: 1px solid {t['border']}; border-radius: 50px;
-    padding: 0.22rem 0.8rem; font-size: 0.82rem; font-weight: 700; color: {t['chip_text']};
-    transition: transform 0.15s ease; cursor: default;
-}}
-.hist-chip:hover {{ transform: scale(1.07); }}
+.hist-chip {{ background: {t['chip_bg']}; border: 1px solid {t['border']}; border-radius: 50px; padding: 0.22rem 0.8rem; font-size: 0.82rem; font-weight: 700; color: {t['chip_text']}; }}
 
 /* ── Misc ── */
 .hdivider {{ border: none; border-top: 1px solid {t['border']}; margin: 0.85rem 0; }}
-.banner-warn {{
-    background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.38);
-    border-radius: 12px; padding: 0.7rem 1rem; font-size: 0.82rem;
-    color: {t['warning']}; margin-bottom: 0.9rem;
-}}
-.footer {{
-    text-align: center; padding: 1.8rem 0 0.4rem; font-size: 0.76rem;
-    color: {t['text_muted']}; border-top: 1px solid {t['border']}; margin-top: 2rem;
-}}
+.banner-warn {{ background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.38); border-radius: 12px; padding: 0.7rem 1rem; font-size: 0.82rem; color: {t['warning']}; margin-bottom: 0.9rem; }}
+.fc-badge {{ text-align:center; padding-top:0.45rem; font-size:0.72rem; font-weight:700; color:{t['text_muted']}; }}
+.footer {{ text-align: center; padding: 1.8rem 0 0.4rem; font-size: 0.76rem; color: {t['text_muted']}; border-top: 1px solid {t['border']}; margin-top: 2rem; }}
 .footer strong {{ color: {t['accent']}; }}
 [data-testid="column"] {{ padding: 0 0.5rem !important; }}
 </style>
@@ -334,7 +293,20 @@ IMG_SIZE    = 224
 CONF_THRESH = 0.70
 STABILITY_N = 8
 
+RTC_CONFIGURATION = {
+    "iceServers": [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun1.l.google.com:19302"]},
+        {"urls": ["stun:stun2.l.google.com:19302"]},
+        {"urls": ["stun:stun3.l.google.com:19302"]},
+    ]
+}
 
+# run_mode is determined entirely by IS_CLOUD — no user selection locally
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 def try_import(name):
     try:
         return importlib.import_module(name), None
@@ -343,7 +315,58 @@ def try_import(name):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  MODEL LOADING
+#  TTS
+# ─────────────────────────────────────────────────────────────────────────────
+def speak_text(text: str):
+    if st.session_state.get("run_mode", RUN_MODE) == "browser":
+        _speak_browser(text)
+    else:
+        _speak_local(text)
+
+
+def _speak_browser(text: str):
+    """
+    Executes Web Speech API in the user's browser.
+    Written into _tts_slot — a pre-allocated empty outside the columns —
+    so no iframe injection disrupts the column layout.
+    """
+    safe = (text.replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace('"', '\\"')
+                .replace("\n", " "))
+    snippet = f"""<script>
+    (function(){{
+        if(!window.speechSynthesis) return;
+        var u=new SpeechSynthesisUtterance('{safe}');
+        u.rate=0.9; u.pitch=1.0; u.lang='en-US';
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+    }})();
+    </script>"""
+    try:
+        _tts_slot.html(snippet)
+    except Exception:
+        components.html(snippet, height=0)
+
+
+def _speak_local(text: str):
+    def _run():
+        pyttsx3, err = try_import("pyttsx3")
+        if err:
+            return
+        try:
+            engine = pyttsx3.init()
+            engine.setProperty("rate", 145)
+            engine.setProperty("volume", 0.95)
+            engine.say(text)
+            engine.runAndWait()
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MODEL
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def load_model_and_labels():
@@ -360,10 +383,8 @@ def load_model_and_labels():
             raw = json.load(f)
         if isinstance(raw, dict):
             first_val = next(iter(raw.values()))
-            if isinstance(first_val, int):
-                labels = {v: k for k, v in raw.items()}
-            else:
-                labels = {int(k): v for k, v in raw.items()}
+            labels = ({v: k for k, v in raw.items()} if isinstance(first_val, int)
+                      else {int(k): v for k, v in raw.items()})
         else:
             labels = {i: v for i, v in enumerate(raw)}
         return model, labels, None
@@ -413,15 +434,13 @@ def predict_character(model, labels, roi):
         return None, 0.0
     pred = model.predict(preprocess_roi(roi), verbose=0)[0]
     idx  = int(np.argmax(pred))
-    conf = float(pred[idx])
-    return labels.get(idx, "?"), conf
+    return labels.get(idx, "?"), float(pred[idx])
 
 
 def draw_overlay(frame_rgb, bbox, char, conf, theme):
     x1, y1, x2, y2 = bbox
     h = theme["overlay_hex"].lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    color = (r, g, b)
+    color = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
     cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), color, 2)
     label = f"{char}  {conf*100:.0f}%"
     (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.65, 1)
@@ -431,62 +450,123 @@ def draw_overlay(frame_rgb, bbox, char, conf, theme):
     return frame_rgb
 
 
+def _apply_pipeline(img, model, labels, mp_mod, mp_draw, hands_det):
+    rgb  = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    char, conf = None, 0.0
+    if model is not None and hands_det is not None:
+        detection = hands_det.process(rgb)
+        if detection.multi_hand_landmarks:
+            hl  = detection.multi_hand_landmarks[0]
+            roi, bbox = extract_hand_roi(img, hl)
+            if roi.size > 0:
+                char, conf = predict_character(model, labels, roi)
+            mp_draw.draw_landmarks(
+                rgb, hl,
+                mp_mod.solutions.hands.HAND_CONNECTIONS,
+                mp_mod.solutions.drawing_styles.get_default_hand_landmarks_style(),
+                mp_mod.solutions.drawing_styles.get_default_hand_connections_style(),
+            )
+            if char and bbox:
+                rgb = draw_overlay(rgb, bbox, char, conf, T)
+    return rgb, char, conf
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  TTS
+#  WEBRTC PROCESSOR  (cloud browser mode only)
 # ─────────────────────────────────────────────────────────────────────────────
-def speak_text(text: str):
-    def _run():
-        pyttsx3, err = try_import("pyttsx3")
-        if err:
-            return
-        try:
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 145)
-            engine.setProperty("volume", 0.95)
-            engine.say(text)
-            engine.runAndWait()
-        except Exception:
-            pass
-    threading.Thread(target=_run, daemon=True).start()
+class SignLanguageProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.model, self.labels, _ = load_model_and_labels()
+        self.mp_mod, self.mp_draw, self.hands_det, _ = get_hands_detector()
+        self._stable_buf: list[str] = []
+        self._word  = ""
+        self._lock  = threading.Lock()
+        self.result = {"char": "–", "conf": 0.0, "word": ""}
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        if st.session_state.get("mirror", True):
+            img = cv2.flip(img, 1)
+        rgb, char, conf = _apply_pipeline(
+            img, self.model, self.labels,
+            self.mp_mod, self.mp_draw, self.hands_det,
+        )
+        with self._lock:
+            if char and conf >= CONF_THRESH:
+                self._stable_buf.append(char)
+                if len(self._stable_buf) > STABILITY_N:
+                    self._stable_buf.pop(0)
+                if (len(self._stable_buf) == STABILITY_N
+                        and len(set(self._stable_buf)) == 1):
+                    if not self._word or self._word[-1] != char:
+                        self._word += char
+                    self._stable_buf.clear()
+                self.result = {"char": char, "conf": conf, "word": self._word}
+            else:
+                if self._stable_buf:
+                    self._stable_buf.pop(0)
+                self.result = {"char": char or "–", "conf": conf, "word": self._word}
+        return av.VideoFrame.from_ndarray(rgb, format="rgb24")
+
+    def reset_word(self):
+        with self._lock:
+            self._word = ""
+            self._stable_buf.clear()
+            self.result = {"char": "–", "conf": 0.0, "word": ""}
+
+    def delete_last(self):
+        with self._lock:
+            self._word = self._word[:-1]
+            self.result["word"] = self._word
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  LOAD RESOURCES
 # ─────────────────────────────────────────────────────────────────────────────
-model, labels, model_err = load_model_and_labels()
+model, labels, model_err           = load_model_and_labels()
 mp_mod, mp_draw, hands_det, mp_err = get_hands_detector()
-resource_ok = (model is not None) and (hands_det is not None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  TOP BAR  (logo + theme toggle)
+#  TOP BAR
 # ─────────────────────────────────────────────────────────────────────────────
-top_l, top_r = st.columns([3, 1])
-with top_l:
-    st.markdown("""
+if IS_CLOUD:
+    st.session_state.run_mode = "browser"
+
+_active_mode = st.session_state.get("run_mode", RUN_MODE)
+if _active_mode == "browser":
+    _env_label = "☁️ Cloud · WebRTC"
+else:
+    _env_label = "💻 Local · OpenCV"
+
+tb_l, tb_r = st.columns([3, 1])
+with tb_l:
+    st.markdown(f"""
     <div class="topbar-left">
         <span class="app-logo">🤟</span>
         <span class="app-name">Sign<span>Lang</span> AI</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-with top_r:
-    toggle_label = "🌙 Dark Mode" if st.session_state.dark_mode else "🌞 Light Mode"
-    new_dark = st.toggle(toggle_label, value=st.session_state.dark_mode, key="theme_toggle")
-    if new_dark != st.session_state.dark_mode:
-        st.session_state.dark_mode = new_dark
-        st.rerun()
-
+        <span class="env-badge">{_env_label}</span>
+    </div>""", unsafe_allow_html=True)
+with tb_r:
+    tr1, tr2 = st.columns([1, 1])
+    with tr1:
+        st.session_state.mirror = st.toggle(
+            "🪞 Mirror", value=st.session_state.mirror, key="top_mirror")
+    with tr2:
+        _dark_lbl = "🌙 Dark" if st.session_state.dark_mode else "🌞 Light"
+        _new_dark = st.toggle(_dark_lbl, value=st.session_state.dark_mode, key="theme_toggle")
+        if _new_dark != st.session_state.dark_mode:
+            st.session_state.dark_mode = _new_dark
+            st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  HERO — title only, no badge, no subtitle
+#  HERO
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
     <h1>Real-Time <span>Sign Language</span> Translator</h1>
 </div>
 """, unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ERROR BANNERS
@@ -496,80 +576,24 @@ if model_err:
 if mp_err:
     st.markdown(f'<div class="banner-warn">⚠️ MediaPipe: {mp_err}</div>', unsafe_allow_html=True)
 if model_err or mp_err:
-    st.markdown("""
-    <div class="banner-warn">
-    💡 <b>Demo mode active.</b> Place model files inside a <code>models/</code>
-    subfolder next to <code>app.py</code>, then restart.
-    </div>
-    """, unsafe_allow_html=True)
-
+    st.markdown("""<div class="banner-warn">
+    💡 <b>Demo mode active.</b> Place model files in <code>models/</code> and restart.
+    </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  LAYOUT
 # ─────────────────────────────────────────────────────────────────────────────
-col_vid, col_out = st.columns([1.1, 0.9], gap="large")
+# _tts_slot: pre-declared outside columns so speak_text() can write into it
+# without disrupting column layout. Renders zero pixels.
+_tts_slot = st.empty()
 
+col_vid, col_out = st.columns([1.15, 0.85], gap="large")
 
-# ══════════════════════════════════════════════════════════
-#  LEFT — video
-# ══════════════════════════════════════════════════════════
-with col_vid:
-    st.markdown('<div class="clean-card">', unsafe_allow_html=True)
-
-    # Card title — live dot shown inline when camera is active, no separate badge pill
- 
-
-    # Controls: Start (green) | Stop (red) | Mirror toggle | frame counter
-    vc1, vc2, vc3, vc4 = st.columns([1, 1, 1.1, 0.9])
-    with vc1:
-        st.markdown('<div class="btn-start">', unsafe_allow_html=True)
-        if st.button("▶ Start", use_container_width=True,
-                     disabled=st.session_state.run_camera, key="btn_start"):
-            st.session_state.run_camera = True
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with vc2:
-        st.markdown('<div class="btn-stop">', unsafe_allow_html=True)
-        if st.button("⏹ Stop", use_container_width=True,
-                     disabled=not st.session_state.run_camera, key="btn_stop"):
-            st.session_state.run_camera = False
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with vc3:
-        st.session_state.mirror = st.toggle("🪞 Mirror", value=st.session_state.mirror)
-    with vc4:
-        fc = st.session_state.frame_count
-        txt = ("🎞 " + str(fc)) if fc else "⏳ Ready"
-        st.markdown(
-            f'<div style="text-align:center;padding-top:0.45rem;font-size:0.72rem;'
-            f'font-weight:700;color:{T["text_muted"]};">{txt}</div>',
-            unsafe_allow_html=True,
-        )
-
-   
-
-    video_slot = st.empty()
-    if not st.session_state.run_camera:
-        video_slot.markdown("""
-        <div class="video-off">
-            <div class="icon">📷</div>
-            <div class="msg">Camera is off</div>
-            <div class="sub">Press ▶ Start to begin detection</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════════════════
-#  RIGHT — output
-# ══════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+#  RIGHT — output panel
+# ══════════════════════════════════════════════════════════════════════════════
 with col_out:
     st.markdown('<div class="clean-card">', unsafe_allow_html=True)
-    # st.markdown(
-    #     '<div class="card-header"><span class="card-title">📊 PREDICTION OUTPUT</span></div>',
-    #     unsafe_allow_html=True,
-    # )
 
     char_slot = st.empty()
     conf_slot = st.empty()
@@ -579,24 +603,20 @@ with col_out:
         <div class="char-panel">
             <div class="clabel">Detected Character</div>
             <div class="char-big">{char}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        pct = conf * 100
-        fill_color = (T["success"] if conf >= 0.80
-                      else (T["warning"] if conf >= CONF_THRESH else T["danger"]))
+        </div>""", unsafe_allow_html=True)
+        pct  = conf * 100
+        fill = (T["success"] if conf >= 0.80
+                else (T["warning"] if conf >= CONF_THRESH else T["danger"]))
         conf_slot.markdown(f"""
         <div class="conf-wrap">
-            <div class="conf-row">
-                <span class="conf-row-label">Confidence</span>
-                <div class="conf-track">
-                    <div class="conf-fill" style="width:{pct:.1f}%;background:{fill_color};"></div>
-                </div>
-                <span class="conf-pct" style="color:{fill_color};">{pct:.0f}%</span>
+          <div class="conf-row">
+            <span class="conf-row-label">Confidence</span>
+            <div class="conf-track">
+              <div class="conf-fill" style="width:{pct:.1f}%;background:{fill};"></div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    render_char_conf(st.session_state.last_char, st.session_state.last_conf)
+            <span class="conf-pct" style="color:{fill};">{pct:.0f}%</span>
+          </div>
+        </div>""", unsafe_allow_html=True)
 
     word_slot = st.empty()
 
@@ -606,11 +626,12 @@ with col_out:
         <div class="word-box">
             <div class="wlabel">Formed Word</div>
             <div class="word-text">{display}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 
+    render_char_conf(st.session_state.last_char, st.session_state.last_conf)
     render_word(st.session_state.word)
 
+    # Action buttons
     ab1, ab2, ab3 = st.columns(3)
     with ab1:
         if st.button("🔊 Speak", use_container_width=True, key="btn_speak"):
@@ -630,20 +651,166 @@ with col_out:
             st.session_state.stable_buf = []
             st.session_state.last_char  = "–"
             st.session_state.last_conf  = 0.0
+            st.session_state.run_camera = False
             st.rerun()
 
-   
+    if st.session_state.history:
+        st.markdown('<hr class="hdivider">', unsafe_allow_html=True)
+        chips = "".join(
+            f'<span class="hist-chip">{w}</span>'
+            for w in st.session_state.history[-6:]
+        )
+        st.markdown(f'<div class="hist-wrap">{chips}</div>', unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Settings — only shown locally, only one mode available (OpenCV)
+    # Browser/WebRTC mode is cloud-only and activates automatically via IS_CLOUD.
+    if not IS_CLOUD:
+        st.session_state.run_mode = "local"   # enforce local mode on local machine
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LEFT — video panel  (display only — no buttons, no controls)
+# ══════════════════════════════════════════════════════════════════════════════
+with col_vid:
+    st.markdown('<div class="clean-card">', unsafe_allow_html=True)
+
+    active_mode = st.session_state.run_mode
+
+    if active_mode == "browser":
+        # Cloud-only: WebRTC streaming
+        st.markdown(
+            f'<div style="font-size:0.72rem;font-weight:700;color:{T["text_muted"]};'
+            f'margin-bottom:0.5rem;"><span class="live-dot-inline"></span>'
+            f'WebRTC · Browser Camera · Web Speech TTS</div>',
+            unsafe_allow_html=True,
+        )
+        ctx = webrtc_streamer(
+            key="sign-lang-webrtc",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            video_processor_factory=SignLanguageProcessor,
+            media_stream_constraints={
+                "video": {"width": {"ideal": 1280}, "height": {"ideal": 720}},
+                "audio": False,
+            },
+            async_processing=True,
+            translations={
+                "start": "▶ Start Camera",
+                "stop":  "⏹ Stop Camera",
+            },
+        )
+        if ctx.state.playing and ctx.video_processor:
+            while ctx.state.playing:
+                result = ctx.video_processor.result
+                char = result.get("char", "–")
+                conf = result.get("conf", 0.0)
+                word = result.get("word", "")
+                st.session_state.last_char = char
+                st.session_state.last_conf = conf
+                st.session_state.word      = word
+                render_char_conf(char, conf)
+                render_word(word)
+                time.sleep(0.10)
+
+    else:
+        # Local OpenCV mode — mirrors snapshot mode structure exactly:
+        #   label row  →  Start/Stop buttons  →  video area
+        #
+        # video_slot is declared HERE inside the column so it occupies the
+        # correct visual position. The camera loop (after footer) holds the
+        # same reference and writes frames into it — st.empty() references
+        # remain valid and writable from anywhere in the script.
+
+        # Status label — mirrors snapshot mode's label exactly
+        dot = '<span class="live-dot-inline"></span>' if st.session_state.run_camera else ""
+        status = "Live · OpenCV · pyttsx3 TTS" if st.session_state.run_camera else "OpenCV · pyttsx3 TTS"
+        st.markdown(
+            f'<div style="font-size:0.72rem;font-weight:700;color:{T["text_muted"]};'
+            f'margin-bottom:0.5rem;">{dot}{status}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Video area — declared inside the column so it sits in the right place.
+        # The camera loop below writes frames here via this reference.
+        video_slot = st.empty()
+        if not st.session_state.run_camera:
+            video_slot.markdown("""
+            <div class="video-off">
+                <div class="icon">📷</div>
+                <div class="msg">Camera is off</div>
+                <div class="sub">Press ▶ Start to begin detection</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            # Write a loading placeholder so the slot has height and is visible
+            # in the column. The camera loop overwrites this with real frames.
+            video_slot.markdown("""
+            <div class="video-off">
+                <div class="icon">⏳</div>
+                <div class="msg">Starting camera…</div>
+                <div class="sub">First frame loading</div>
+            </div>""", unsafe_allow_html=True)
+
+        # Start / Stop row — below video
+        st.markdown('<div style="margin-top:0.6rem;"></div>', unsafe_allow_html=True)
+        vc1, vc2, vc3 = st.columns([1, 1, 1])
+        with vc1:
+            st.markdown('<div class="btn-start">', unsafe_allow_html=True)
+            if st.button("▶ Start", use_container_width=True,
+                         disabled=st.session_state.run_camera, key="btn_start"):
+                st.session_state.run_camera  = True
+                st.session_state.frame_count = 0
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with vc2:
+            st.markdown('<div class="btn-stop">', unsafe_allow_html=True)
+            if st.button("⏹ Stop", use_container_width=True,
+                         disabled=not st.session_state.run_camera, key="btn_stop"):
+                st.session_state.run_camera = False
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with vc3:
+            fc  = st.session_state.get("frame_count", 0)
+            txt = ("🎞 " + str(fc)) if fc else "⏳ Ready"
+            st.markdown(f'<div class="fc-badge">{txt}</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CAMERA LOOP
+#  FOOTER
 # ─────────────────────────────────────────────────────────────────────────────
-if st.session_state.run_camera:
-    cap = cv2.VideoCapture(0)
+_mode = st.session_state.run_mode
+tts_tech = "Web Speech API" if _mode == "browser" else "pyttsx3"
+cam_tech = "WebRTC" if _mode == "browser" else "OpenCV"
+st.markdown(f"""
+<div class="footer">
+    Built with 🤟 using
+    <strong>Streamlit</strong> ·
+    <strong>TensorFlow 2.15</strong> ·
+    <strong>MediaPipe</strong> ·
+    <strong>OpenCV</strong> ·
+    <strong>{cam_tech}</strong> ·
+    <strong>{tts_tech}</strong>
+    &nbsp;—&nbsp; Sign Language Translator v7.0
+</div>
+""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LOCAL CAMERA LOOP
+#  Runs AFTER all columns have rendered — including Start/Stop buttons which
+#  are now inside col_vid above the video area.
+#  video_slot was declared inside col_vid; its reference is valid here.
+#  Stop sets run_camera=False → next rerun skips this block entirely.
+# ─────────────────────────────────────────────────────────────────────────────
+if st.session_state.run_mode == "local" and st.session_state.run_camera:
+    cam_idx = int(os.getenv("CAMERA_INDEX", "0"))
+    cap = cv2.VideoCapture(cam_idx)
     if not cap.isOpened():
-        st.error("❌ Could not open webcam. Check permissions and try again.")
+        with col_vid:
+            st.error(f"❌ Could not open camera {cam_idx}. Check Camera Device selection.")
         st.session_state.run_camera = False
         st.stop()
 
@@ -657,42 +824,22 @@ if st.session_state.run_camera:
             if st.session_state.mirror:
                 frame = cv2.flip(frame, 1)
 
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             st.session_state.frame_count += 1
 
-            char, conf = None, 0.0
+            rgb, char, conf = _apply_pipeline(
+                frame, model, labels, mp_mod, mp_draw, hands_det,
+            )
 
-            if resource_ok:
-                result = hands_det.process(rgb)
-                if result.multi_hand_landmarks:
-                    hl = result.multi_hand_landmarks[0]
-                    roi, bbox = extract_hand_roi(frame, hl)
-
-                    if roi.size > 0:
-                        char, conf = predict_character(model, labels, roi)
-
-                    mp_draw.draw_landmarks(
-                        rgb,
-                        hl,
-                        mp_mod.solutions.hands.HAND_CONNECTIONS,
-                        mp_mod.solutions.drawing_styles.get_default_hand_landmarks_style(),
-                        mp_mod.solutions.drawing_styles.get_default_hand_connections_style(),
-                    )
-
-                    if char and bbox:
-                        rgb = draw_overlay(rgb, bbox, char, conf, T)
-
-            video_slot.image(rgb, channels="RGB", use_container_width=True)
+            with col_vid:
+                video_slot.image(rgb, channels="RGB", use_container_width=True)
 
             if char and conf >= CONF_THRESH:
                 st.session_state.last_char = char
                 st.session_state.last_conf = conf
-
                 buf = st.session_state.stable_buf
                 buf.append(char)
                 if len(buf) > STABILITY_N:
                     buf.pop(0)
-
                 if len(buf) == STABILITY_N and len(set(buf)) == 1:
                     if not st.session_state.word or st.session_state.word[-1] != char:
                         st.session_state.word += char
@@ -706,25 +853,6 @@ if st.session_state.run_camera:
 
             render_char_conf(st.session_state.last_char, st.session_state.last_conf)
             render_word(st.session_state.word)
-           
-
             time.sleep(0.05)
-
     finally:
         cap.release()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  FOOTER
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="footer">
-    Built with 🤟 using
-    <strong>Streamlit</strong> ·
-    <strong>TensorFlow 2.12</strong> ·
-    <strong>MediaPipe</strong> ·
-    <strong>OpenCV</strong> ·
-    <strong>pyttsx3</strong>
-    &nbsp;—&nbsp; Sign Language Translator v3.0
-</div>
-""", unsafe_allow_html=True)

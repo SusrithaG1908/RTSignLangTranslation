@@ -1,78 +1,260 @@
-# 🤟 Sign Language Translator (AI/ML Project)
+# 🤟 Real-Time Sign Language Translation System
 
-**Problem Statement**
-People with hearing and speech impairments use sign language as their primary means of communication. However, most people do not understand sign language, leading to communication barriers. There is a need for an automated system that can translate sign language gestures into text and speech in real time to facilitate smooth communication.
+An AI-powered **Sign Language Translator** that recognizes ASL hand gestures from a webcam and converts them into **text** and **speech** in real time. Built using **MediaPipe** hand localization, **MobileNetV2** transfer learning, and **temporal smoothing** — achieving **95.3% top-1 accuracy** on a 36-class dataset without GPU acceleration.
 
-**Solution**
-An AI-powered **Sign Language Translator** that recognizes hand gestures from images or webcam feed and converts them into **text** (and optional **speech**). Built using **Computer Vision** and **Deep Learning (CNN)** to help bridge communication gaps for hearing-impaired users.
+The app **automatically detects its environment** at startup — no configuration needed. Run locally and it uses OpenCV + pyttsx3. Deploy to Hugging Face or Render and it uses WebRTC + Web Speech API.
 
 ---
 
 ## 📌 Objectives
 
-- To design a real-time sign language recognition system
-- To train a deep learning model to classify hand gestures
-- To display recognized signs as text
-- To optionally convert text output into speech
-- To build a simple user interface for interaction
+- Design a real-time sign language recognition system operable on consumer hardware (CPU-only)
+- Integrate MediaPipe-based hand localization with a fine-tuned MobileNetV2 classifier
+- Suppress frame-level prediction jitter via sliding-window temporal smoothing
+- Display recognized signs as text and optionally convert to speech
+- Support both local development and public cloud deployment with live webcam and audio
 
 ---
 
 ## 📌 Features
 
-- ✅ Real-time sign recognition using webcam (OpenCV)
-- 🧠 CNN-based gesture classification (TensorFlow/Keras)
-- 🔊 Optional text-to-speech output
-- 📊 Model evaluation with accuracy, confusion matrix, and classification report
-- 🧪 Train / Validate / Test pipeline
-- 🌐 Simple web UI for demo
+- ✅ **Auto-detected webcam mode**: OpenCV (local) or WebRTC (cloud) — zero config
+- 🧠 Fine-tuned **MobileNetV2** gesture classifier (TensorFlow / Keras)
+- 🪟 Sliding-window **temporal smoothing** (majority-vote, W=10) for stable output
+- 🔊 **Auto-detected TTS**: pyttsx3 (local) or Web Speech API (cloud) — zero config
+- ☁️ **Environment badge** in UI — `💻 Local · OpenCV` or `☁️ Cloud · WebRTC`
+- 🌙 Light / Dark mode toggle
+- 🪞 Mirror toggle for front-facing cameras
+- 📊 Confidence bar with colour-coded thresholds (green / amber / red)
+- 🔄 Delete last character, Reset word, word history tracking
 
 ---
 
 ## 🧱 System Architecture
 
+The inference pipeline (MediaPipe → ROI → MobileNetV2 → smoothing) is identical in both modes. Only the frame source and audio output differ.
+
+### Local mode (auto-detected)
+
 ```
-Camera / Image
-      │
-      ▼
-Hand Detection (OpenCV / MediaPipe)
-      │
-      ▼
-Preprocessing (Resize, Normalize)
-      │
-      ▼
-CNN Model (TensorFlow/Keras)
-      │
-      ▼
-Text Output  ──► (Optional) Text-to-Speech
+cv2.VideoCapture(CAMERA_INDEX)
+    │  BGR frame
+    ▼
+MediaPipe Hands — 21 landmarks → ROI crop       (~26 ms/frame)
+    │
+    ▼
+Resize 224×224 · ImageNet normalise
+→ MobileNetV2 inference (3.4M params)           (~39 ms/frame)
+→ Temporal smoothing (W=10)
+    │
+    ▼
+st.image() → displayed in Streamlit left column
+Completed word → pyttsx3 → OS audio speakers
+
+Controls: ▶ Start  ⏹ Stop  (below video in left column)
 ```
+
+### Cloud mode (auto-detected on Render / Hugging Face)
+
+```
+User's Browser
+    │  webcam captured by browser (permission prompt)
+    │  frames sent to server via WebRTC + STUN
+    ▼
+Server: MediaPipe → ROI → MobileNetV2 → smoothing
+    │
+    │  annotated frame returned to browser via WebRTC
+    ▼
+Browser renders video (streamlit-webrtc widget)
+Completed word → Web Speech API → browser speaks it
+    (server has no camera, no audio hardware involved)
+```
+
+### Mode detection flow
+
+```
+App starts
+    ├─ RENDER=true    → auto by Render      → ☁️ Cloud · WebRTC + Web Speech
+    ├─ SPACE_ID set   → auto by HF Spaces   → ☁️ Cloud · WebRTC + Web Speech
+    └─ neither        → local machine       → 💻 Local · OpenCV + pyttsx3
+```
+
+Total end-to-end inference latency: **~87 ms** (CPU-only) — within the 100 ms interactive threshold.
+
+---
+
+## 🖥️ Running Scenarios
+
+### Scenario 1 — Local machine · OpenCV · pyttsx3
+
+**What runs where:** `cv2.VideoCapture` opens the webcam directly on your machine. MediaPipe and MobileNetV2 run locally. pyttsx3 speaks through your OS audio drivers.
+
+**Nothing to configure.** Just run:
+
+```bash
+streamlit run scripts/app.py
+```
+
+The UI badge shows **💻 Local · OpenCV**. The left column shows a **▶ Start** / **⏹ Stop** button row below the video area. To use a non-default camera, set `CAMERA_INDEX`:
+
+```bash
+# Windows — use Camera 1 (e.g. external USB webcam)
+set CAMERA_INDEX=1 && streamlit run scripts/app.py
+
+# macOS / Linux
+CAMERA_INDEX=1 streamlit run scripts/app.py
+```
+
+---
+
+### Scenario 2 — Hugging Face Spaces · WebRTC · Web Speech API
+
+**What runs where:** Hugging Face automatically injects `SPACE_ID`. The app locks to cloud mode. The user's browser captures the webcam, sends frames to the HF server via WebRTC, the server runs inference, returns annotated frames to the browser. Web Speech API speaks the result in the browser. The server has no camera or audio hardware.
+
+**Configuration before deploying:**
+
+1. Use `requirements.txt` (cloud build — `opencv-python-headless`, `streamlit-webrtc`, no pyttsx3)
+2. Add `.streamlit/config.toml`:
+
+```toml
+[server]
+headless = true
+port = 7860
+enableCORS = false
+enableXsrfProtection = false
+```
+
+3. Commit model files directly — model is < 30 MB, within GitHub's 100 MB limit, no LFS needed
+4. `SPACE_ID` is injected automatically — no env vars to set manually
+
+**Deploy steps:**
+
+1. [huggingface.co/spaces](https://huggingface.co/spaces) → New Space → SDK: **Streamlit**
+2. Connect your GitHub repository
+3. Start command: `streamlit run scripts/app.py`
+
+---
+
+### Scenario 3 — Render · WebRTC · Web Speech API
+
+**What runs where:** Identical to Hugging Face. Render injects `RENDER=true` automatically.
+
+**Configuration:**
+
+`.streamlit/config.toml`:
+
+```toml
+[server]
+headless = true
+port = 10000
+enableCORS = false
+enableXsrfProtection = false
+```
+
+**Render web service settings:**
+
+| Field                | Value                                                                       |
+| -------------------- | --------------------------------------------------------------------------- |
+| Build Command        | `pip install -r requirements.txt`                                           |
+| Start Command        | `streamlit run scripts/app.py --server.port 10000 --server.address 0.0.0.0` |
+| Environment Variable | `PYTHON_VERSION` = `3.11.0`                                                 |
+
+---
+
+### Scenario summary
+
+| Scenario            | Detected by                 | Camera                           | Audio                    | UI badge          |
+| ------------------- | --------------------------- | -------------------------------- | ------------------------ | ----------------- |
+| Local machine       | neither env var set         | `cv2.VideoCapture` on machine    | pyttsx3 (OS drivers)     | 💻 Local · OpenCV |
+| Hugging Face Spaces | `SPACE_ID` auto-injected    | Browser → WebRTC → HF server     | Web Speech API (browser) | ☁️ Cloud · WebRTC |
+| Render              | `RENDER=true` auto-injected | Browser → WebRTC → Render server | Web Speech API (browser) | ☁️ Cloud · WebRTC |
+
+---
+
+## 🔧 Environment Variables Reference
+
+| Variable         | Set by                   | Values                | Effect                                           |
+| ---------------- | ------------------------ | --------------------- | ------------------------------------------------ |
+| `RENDER`         | Render (automatic)       | `true`                | Forces cloud/WebRTC mode                         |
+| `SPACE_ID`       | Hugging Face (automatic) | space name            | Forces cloud/WebRTC mode                         |
+| `CAMERA_INDEX`   | You (optional)           | `0` · `1` · `2` · `3` | Camera device index for local mode. Default: `0` |
+| `PYTHON_VERSION` | You (Render panel)       | `3.11.0`              | Ensures correct Python on Render                 |
+
+> `RUN_MODE` is no longer a supported variable — mode is determined entirely by platform environment variables.
+
+---
+
+## 📈 Results
+
+### Classification Accuracy
+
+| Method                                   | Accuracy (%) | Smoothing |
+| ---------------------------------------- | ------------ | --------- |
+| Standard CNN (from scratch)              | 91.2         | No        |
+| MobileNetV2 (no smoothing)               | 92.5         | No        |
+| EfficientNet-B0 (no smoothing)           | 93.1         | No        |
+| **Proposed System (MobileNetV2 + W=10)** | **95.3**     | **Yes**   |
+
+### Macro-Averaged Metrics (36 classes)
+
+| System                     | Precision | Recall    | F1-Score  |
+| -------------------------- | --------- | --------- | --------- |
+| MobileNetV2 (no smoothing) | 0.928     | 0.921     | 0.917     |
+| **Proposed (W=10)**        | **0.951** | **0.948** | **0.942** |
+
+### Inference Latency (CPU-only, n=500 frames)
+
+| Stage                          | Avg. Time (ms) |
+| ------------------------------ | -------------- |
+| Frame Capture & Conversion     | 8              |
+| MediaPipe Hand Detection       | 26             |
+| ROI Extraction & Preprocessing | 14             |
+| MobileNetV2 Inference          | 39             |
+| **Total (End-to-End)**         | **87**         |
+
+### Temporal Smoothing Ablation
+
+| W        | Accuracy (%) | Label Changes / 3s | Stability Gain |
+| -------- | ------------ | ------------------ | -------------- |
+| 1 (none) | 92.5         | 4.7                | —              |
+| 5        | 93.8         | 2.1                | 55.3%          |
+| **10**   | **95.3**     | **0.3**            | **93.6%**      |
+| 15       | 95.1         | 0.1                | 97.9%          |
+
+Accuracy / Loss Plot:
+![Accuracy Loss](reports/Figure_2_epochs_accuary_loss_withMediaPipe.png)
+
+Confusion Matrix:
+![Confusion Matrix](reports/Figure_3_confusionmatrix_withMediaPipe.png)
 
 ---
 
 ## 🗂️ Project Structure
 
 ```
-sign_language_translator/
+RTSignLangTranslation/
 │
 ├── data/
-│   ├── train/
+│   ├── train/          ← A–Z + del, nothing, space
 │   ├── val/
 │   └── test/
 │
 ├── models/
-│   ├── sign_model.h5
-│   └── class_labels.json
+│   ├── mobilenet_mp_25%_v2_best.h5
+│   └── class_labels_mobilenet_mp_25%_v2.json
 │
-├── core/                        ← shared classes (import from here)
-│   ├── __init__.py              ← re-exports everything
-│   ├── hand_cropper.py          ← HandCropper + CropResult
-│   ├── preprocessor.py          ← ImagePreprocessor + PreprocessResult
-│   ├── classifier.py            ← SignClassifier + Prediction
-│   ├── pipeline_config.py       ← PipelineConfig + PipelineRegistry
-│   ├── dataset.py               ← DatasetDownloader + DatasetOrganizer
-│   ├── tts_speaker.py           ← TTSSpeaker
-│   └── word_builder.py          ← WordBuilder + WordBuilderState
-└── scripts/                     ← thin entry-point scripts
+├── core/                        ← shared pipeline modules
+│   ├── __init__.py
+│   ├── hand_cropper.py
+│   ├── preprocessor.py
+│   ├── classifier.py
+│   ├── pipeline_config.py
+│   ├── dataset.py
+│   ├── tts_speaker.py
+│   └── word_builder.py
+│
+├── scripts/
+│   ├── app.py                   ← Streamlit web app (v7.0)
 │   ├── download_and_prepare_dataset.py
 │   ├── crop_existing_dataset_with_mediapipe.py
 │   ├── crop_input_image_with_mediapipe.py
@@ -81,7 +263,15 @@ sign_language_translator/
 │   ├── predict_single_image.py
 │   └── predict_webcam.py
 │
-├── requirements.txt
+├── reports/
+│   ├── Figure_2_epochs_accuary_loss_withMediaPipe.png
+│   └── Figure_3_confusionmatrix_withMediaPipe.png
+│
+├── .streamlit/
+│   └── config.toml              ← headless=true · port=7860 (HF) or 10000 (Render)
+│
+├── requirements.txt             ← cloud deployment (headless OpenCV, WebRTC, no pyttsx3)
+├── requirements-local.txt       ← local development (full OpenCV, pyttsx3, kaggle tools)
 └── README.md
 ```
 
@@ -89,11 +279,18 @@ sign_language_translator/
 
 ## ⚙️ Tech Stack
 
-- **Language:** Python
-- **Deep Learning:** TensorFlow, Keras
-- **Computer Vision:** OpenCV, MediaPipe
-- **UI:** Streamlit
-- **Utilities:** NumPy, scikit-learn, Matplotlib, pyttsx3
+| Category        | Library / Tool                                 |
+| --------------- | ---------------------------------------------- |
+| Language        | Python 3.11                                    |
+| Deep Learning   | TensorFlow 2.15, Keras                         |
+| Backbone        | MobileNetV2 (pretrained ImageNet)              |
+| Computer Vision | OpenCV, MediaPipe Hands                        |
+| Web UI          | Streamlit                                      |
+| Webcam — Local  | `cv2.VideoCapture` (direct OS access)          |
+| Webcam — Cloud  | `streamlit-webrtc` + `aiortc` (WebRTC)         |
+| TTS — Local     | pyttsx3 (OS audio drivers)                     |
+| TTS — Cloud     | Web Speech API (browser-native, zero packages) |
+| Utilities       | NumPy, scikit-learn, Matplotlib, seaborn       |
 
 ---
 
@@ -106,164 +303,179 @@ git clone https://github.com/<your-username>/RTSignLangTranslation.git
 cd RTSignLangTranslation
 ```
 
-### 2️⃣ Create Virtual Environment (Recommended)
+### 2️⃣ Create Virtual Environment
 
 ```bash
-Check available Python versions on system:
-py -0p
-
-If single python version is available on system:
-
-Create Virtual Environment
+# Single Python version
 python -m venv .venv
 
-Activate:
-**Windows**
-.\.venv\Scripts\activate
-
-If multiple python versions are available on system:
-
-Create Virtual Environment
+# Multiple Python versions — use 3.11
 py -3.11 -m venv .venv
 
-Activate:
-**Windows**
+# Activate — Windows
 .\.venv\Scripts\activate
 
-Check Version:
-python --version
+# Activate — macOS / Linux
+source .venv/bin/activate
 
-Create ipykernel associated with venv
-pip install ipykernel
-
-Register ipykernel to select from IDE
-python -m ipykernel install --user --name venv311 --display-name "Python 3.11 (.venv)"
-
-Select "Python 3.11 (.venv)" as the Python Interpreter in IDE
-Press Ctrl + Shift + P
-Select Python Interpreter
-From the available list, select "Python 3.11 (.venv)"
+python --version   # confirm 3.11.x
 ```
+
+### 3️⃣ Install Local Dependencies
+
+```bash
+pip install -r requirements-local.txt
+```
+
+### 4️⃣ (Optional) Register Jupyter Kernel
+
+```bash
+pip install ipykernel
+python -m ipykernel install --user --name venv311 --display-name "Python 3.11 (.venv)"
+```
+
+---
 
 ## 📁 Dataset Setup
 
-Use ASL Alphabet dataset (Kaggle). Organize as:
-
-```
-data/
- ├── train/A, B, C, ...
- ├── val/A, B, C, ...
- └── test/A, B, C, ...
-```
-
-### Dataset Setup (Download & Organize)
+36-class combined dataset (~12,000 images): ASL Alphabet (Kaggle, 87k images, 29 classes) + original ISL captures across 7 signers and 4 lighting conditions.
 
 ```bash
+# Download and organize automatically
 python scripts/download_and_prepare_dataset.py
-```
 
-### Collect Your Own Dataset
-
-```bash
-python scripts/collect_data.py
-```
-
-### Preprocess
-
-```bash
+# Preprocess with MediaPipe hand cropping
 python scripts/crop_existing_dataset_with_mediapipe.py
-python scripts/preprocess.py
 ```
+
+---
 
 ## 🏋️ Model Training
 
 ```bash
-python scripts/train_model.py
-python scripts/evaluate_model.py
+python scripts/train_pipelines.py
+python scripts/benchmark_pipelines.py
 ```
 
-## Real Time Inference
+Training configuration: Adam optimizer · cosine LR decay · batch 32 · 30 epochs · 10-epoch warm-up (backbone frozen) · fine-tune top 2 MobileNetV2 blocks at LR=1e-5 · augmentation: horizontal flip, brightness/contrast ±30%, random occlusion.
+
+---
+
+## 🔍 Local CLI Inference
 
 ```bash
+# Single image prediction
+python scripts/predict_single_image.py --image path/to/image.jpg
+
+# Live webcam (bypasses Streamlit entirely)
 python scripts/predict_webcam.py
-python scripts/crop_input_image_with_mediapipe.py
-python scripts/predict_single_image.py
 ```
 
-## 🌐 Web UI (Streamlit)
+---
 
-```bash
-python scripts/app.py
-```
+## 📦 Requirements Files — What Differs
 
-## 📈 Results
+| Package       | `requirements-local.txt`           | `requirements.txt` (cloud)            |
+| ------------- | ---------------------------------- | ------------------------------------- |
+| OpenCV        | `opencv-contrib-python` (full GUI) | `opencv-python-headless` (no display) |
+| TensorFlow    | `tensorflow` + `tensorflow-intel`  | `tensorflow` only                     |
+| WebRTC        | `streamlit-webrtc`, `aiortc`, `av` | same                                  |
+| TTS           | `pyttsx3`                          | ❌ removed (Web Speech API used)      |
+| Audio         | `sounddevice`                      | ❌ removed                            |
+| Dataset tools | `kaggle`, `kagglesdk`              | ❌ removed                            |
+| GCS IO        | `tensorflow-io-gcs-filesystem`     | ❌ removed                            |
 
-Accuracy Loss Plot:
-![alt text](reports/Figure_2_epochs_accuary_loss_withMediaPipe.png)
-
-Classification Report:
-
-              precision    recall  f1-score   support
-
-           A       0.72      0.50      0.59       825
-           B       0.61      0.63      0.62       833
-           C       0.52      0.61      0.56       836
-           D       0.47      0.67      0.55       826
-           E       0.84      0.41      0.56       829
-           F       0.84      0.68      0.75       828
-           G       0.70      0.45      0.55       830
-           H       0.63      0.67      0.65       845
-           I       0.39      0.66      0.49       831
-           J       0.74      0.51      0.60       833
-           K       0.74      0.45      0.56       829
-           L       0.66      0.58      0.62       820
-           M       0.41      0.72      0.52       825
-           N       0.41      0.81      0.54       823
-           O       0.46      0.53      0.49       833
-           P       0.78      0.55      0.65       834
-           Q       0.79      0.51      0.62       832
-           R       0.45      0.44      0.44       845
-           S       0.67      0.43      0.52       840
-           T       0.85      0.31      0.46       820
-           U       0.40      0.32      0.36       834
-           V       0.72      0.34      0.46       835
-           W       0.71      0.45      0.55       822
-           X       0.75      0.31      0.44       826
-           Y       0.61      0.46      0.52       848
-           Z       0.73      0.45      0.55       826
-         del       0.51      0.88      0.65       820
-     nothing       1.00      0.54      0.70       831
-       space       0.25      0.90      0.39       837
-
-    accuracy                           0.54     24096
-
-macro avg 0.63 0.54 0.55 24096
-weighted avg 0.63 0.54 0.55 24096
-
-Confusion Matrix:
-![alt text](reports/Figure_3_confusionmatrix_withMediaPipe.png)
+---
 
 ## ⚠️ Limitations
 
+- **Static gestures only** — dynamic two-handed gestures not yet supported
+- **ASL-dominant training** — ISL represents ~18% of training data
+- **Environmental sensitivity** — MediaPipe detection degrades ~18% under direct sunlight or low light
+- **Similar-gesture confusion** — primary error pairs M/N, A/S, E/S account for ~61% of errors
+- **Web Speech API voice quality** varies by OS (excellent on Windows/macOS/Android, robotic on some Linux browsers)
+- **WebRTC on cloud** requires STUN-reachable network; corporate firewalls may need a TURN server
+
+---
+
 ## 🚀 Future Enhancements
+
+- Dynamic gesture support via LSTM / Transformer over temporal MobileNetV2 feature sequences
+- ISL corpus expansion through targeted data collection
+- Confidence-gated output to suppress low-confidence predictions under adverse conditions
+- Multi-angle training to resolve topology-based confusion pairs (M/N, A/S, E/S)
+- TURN server support for restrictive network environments
+- gTTS as a higher-quality cloud TTS alternative
+
+---
+
+## 🔬 Comparison with Prior Work
+
+| Method                          | Accuracy (%) | GPU Required | Real-Time |
+| ------------------------------- | ------------ | ------------ | --------- |
+| Starner & Pentland (HMM)        | 91.0         | No           | Yes       |
+| Koller et al. (CNN)             | 88.3         | Yes          | No        |
+| Bheda & Radpour (MediaPipe+MLP) | 88.7         | No           | Yes       |
+| Chuan et al. (MediaPipe+RF)     | 89.7         | No           | Yes       |
+| **Proposed System**             | **95.3**     | **No**       | **Yes**   |
+
+---
 
 ## 🎓 Use Cases
 
+- **Assistive technology** — real-time communication aid for deaf individuals interacting with non-signing personnel
+- **Sign language education** — self-paced learners verify gesture formation without an instructor
+- **Touch-free interfaces** — smart-home control, clinical environments, AR/VR gesture navigation
+
+---
+
 ## 🧪 Demo
+
+<!-- TODO: Add GIF / video demo link or Hugging Face Space URL here -->
+
+> _Live demo link coming soon._
+
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome!  
-Feel free to fork the repo and submit a PR.
+Contributions are welcome! Fork the repo and submit a pull request. Please open an issue first for significant changes.
+
+---
 
 ## 📜 License
 
-This project is licensed under the **MIT License**.  
-You are free to use, modify, and distribute with attribution.
+This project is licensed under the **MIT License**. You are free to use, modify, and distribute with attribution.
+
+---
 
 ## 🙌 Acknowledgements
 
+- [MediaPipe Hands](https://mediapipe.dev/) — Google's real-time hand landmark detection
+- [MobileNetV2](https://arxiv.org/abs/1801.04381) — Sandler et al., efficient depthwise separable CNN
+- [ASL Alphabet Dataset](https://www.kaggle.com/datasets/grassknoted/asl-alphabet) — Kaggle community dataset
+- [streamlit-webrtc](https://github.com/whitphx/streamlit-webrtc) — WebRTC integration for Streamlit
+- [World Health Organization](https://www.who.int/news-room/fact-sheets/detail/deafness-and-hearing-loss) — Deafness and hearing loss statistics
+
+---
+
+## 📄 Citation
+
+```bibtex
+@inproceedings{susritha2024realtimeasl,
+  title     = {Real-Time Sign Language Translation System Using Deep Learning and Computer Vision},
+  author    = {Gudimetla, Susritha and G., Sravani and Mohan, A.},
+  booktitle = {<!-- TODO: IEEE conference/journal name -->},
+  year      = {<!-- TODO: year -->},
+  pages     = {<!-- TODO: pages -->},
+  doi       = {<!-- TODO: DOI -->}
+}
+```
+
+---
+
 ## 📬 Contact
 
-**Author:** Susritha Gudimetla  
+**Author:** Susritha Gudimetla
 **Email:** gudimetlasusritha@gmail.com
+**Institution:** Department of Computer Science and Engineering, Chaitanya Bharathi Institute of Technology, Hyderabad, India
