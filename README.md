@@ -19,6 +19,10 @@ An AI-powered **Sign Language Translator** that recognizes ASL hand gestures fro
 
 ---
 
+![App Screenshot](reports/demo_screenshot.png)
+
+---
+
 ## 📌 Features
 
 - ✅ **Auto-detected deployment**: Local OpenCV mode or Cloud mode — no configuration needed
@@ -80,7 +84,6 @@ Browser (getUserMedia) → POST /predict → nginx (:7860)
 - Hand skeleton not shown in cloud mode — text overlay (char + conf%) used instead
 - `SPACE_ID` env var auto-injected by HF — no manual configuration needed
 
-
 ---
 
 ## 🗂️ Project Structure
@@ -133,20 +136,20 @@ RTSignLangTranslation/
 
 ## ⚙️ Tech Stack
 
-| Category | Library / Tool |
-|---|---|
-| Language | Python 3.11 |
-| Deep Learning | TensorFlow 2.15, Keras |
-| Backbone | MobileNetV2 (pretrained ImageNet) |
-| Computer Vision | OpenCV, MediaPipe Hands |
-| Web UI | Streamlit |
-| Webcam — Local OpenCV | `cv2.VideoCapture` (direct OS access) |
-| Webcam — Browser modes | `getUserMedia()` (browser JS inside iframe) |
-| Predict Server | Python stdlib `http.server.HTTPServer` (daemon thread, port 8000) |
-| Reverse Proxy | nginx (Docker only — routes :7860 → :8501 and :8000) |
-| TTS — Local | pyttsx3 (OS audio drivers) |
-| TTS — Browser | Web Speech API (browser-native, zero packages) |
-| Utilities | NumPy, Pillow, requests |
+| Category               | Library / Tool                                                    |
+| ---------------------- | ----------------------------------------------------------------- |
+| Language               | Python 3.11                                                       |
+| Deep Learning          | TensorFlow 2.15, Keras                                            |
+| Backbone               | MobileNetV2 (pretrained ImageNet)                                 |
+| Computer Vision        | OpenCV, MediaPipe Hands                                           |
+| Web UI                 | Streamlit                                                         |
+| Webcam — Local OpenCV  | `cv2.VideoCapture` (direct OS access)                             |
+| Webcam — Browser modes | `getUserMedia()` (browser JS inside iframe)                       |
+| Predict Server         | Python stdlib `http.server.HTTPServer` (daemon thread, port 8000) |
+| Reverse Proxy          | nginx (Docker only — routes :7860 → :8501 and :8000)              |
+| TTS — Local            | pyttsx3 (OS audio drivers)                                        |
+| TTS — Browser          | Web Speech API (browser-native, zero packages)                    |
+| Utilities              | NumPy, Pillow, requests                                           |
 
 ---
 
@@ -274,38 +277,38 @@ streamlit run app.py
 
 ### Classification Accuracy
 
-| Method | Accuracy (%) | Smoothing |
-|---|---|---|
-| Standard CNN (from scratch) | 91.2 | No |
-| MobileNetV2 (no smoothing) | 92.5 | No |
-| EfficientNet-B0 (no smoothing) | 93.1 | No |
-| **Proposed System (MobileNetV2 + W=6)** | **95.3** | **Yes** |
+| Method                                  | Accuracy (%) | Smoothing |
+| --------------------------------------- | ------------ | --------- |
+| Standard CNN (from scratch)             | 91.2         | No        |
+| MobileNetV2 (no smoothing)              | 92.5         | No        |
+| EfficientNet-B0 (no smoothing)          | 93.1         | No        |
+| **Proposed System (MobileNetV2 + W=6)** | **95.3**     | **Yes**   |
 
 ### Macro-Averaged Metrics (36 classes)
 
-| System | Precision | Recall | F1-Score |
-|---|---|---|---|
-| MobileNetV2 (no smoothing) | 0.928 | 0.921 | 0.917 |
-| **Proposed (W=6)** | **0.951** | **0.948** | **0.942** |
+| System                     | Precision | Recall    | F1-Score  |
+| -------------------------- | --------- | --------- | --------- |
+| MobileNetV2 (no smoothing) | 0.928     | 0.921     | 0.917     |
+| **Proposed (W=6)**         | **0.951** | **0.948** | **0.942** |
 
 ### Inference Latency (CPU-only, n=500 frames)
 
-| Stage | Avg. Time (ms) |
-|---|---|
-| Frame Capture & Conversion | 8 |
-| MediaPipe Hand Detection | 26 |
-| ROI Extraction & Preprocessing | 14 |
-| MobileNetV2 Inference | 39 |
-| **Total (End-to-End)** | **87** |
+| Stage                          | Avg. Time (ms) |
+| ------------------------------ | -------------- |
+| Frame Capture & Conversion     | 8              |
+| MediaPipe Hand Detection       | 26             |
+| ROI Extraction & Preprocessing | 14             |
+| MobileNetV2 Inference          | 39             |
+| **Total (End-to-End)**         | **87**         |
 
 ### Temporal Smoothing Ablation
 
-| W | Accuracy (%) | Label Changes / 3s | Stability Gain |
-|---|---|---|---|
-| 1 (none) | 92.5 | 4.7 | — |
-| 5 | 93.8 | 2.1 | 55.3% |
-| **6** | **95.3** | **0.3** | **93.6%** |
-| 10 | 95.3 | 0.1 | 97.9% |
+| W        | Accuracy (%) | Label Changes / 3s | Stability Gain |
+| -------- | ------------ | ------------------ | -------------- |
+| 1 (none) | 92.5         | 4.7                | —              |
+| 5        | 93.8         | 2.1                | 55.3%          |
+| **6**    | **95.3**     | **0.3**            | **93.6%**      |
+| 10       | 95.3         | 0.1                | 97.9%          |
 
 ### Per-Class Classification Report
 
@@ -357,15 +360,14 @@ Confusion Matrix:
 
 ## 🔧 Environment Variables
 
-| Variable | Set by | Effect |
-|---|---|---|
-| `SPACE_ID` | HF (automatic) | Forces browser/HTTP mode |
-| `RENDER` | Render (automatic) | Forces browser/HTTP mode |
-| `CAMERA_INDEX` | You (optional) | Camera device index for local OpenCV. Default `0` |
-| `MEDIAPIPE_DISABLE_GPU` | Set in code (`1`) | Forces CPU-only MediaPipe — prevents EGL errors on HF |
-| `CUDA_VISIBLE_DEVICES` | Set in code (`-1`) | Disables CUDA — CPU-only TF inference |
-| `TF_CPP_MIN_LOG_LEVEL` | Set in code (`2`) | Suppresses TF deprecation warnings |
-
+| Variable                | Set by             | Effect                                                |
+| ----------------------- | ------------------ | ----------------------------------------------------- |
+| `SPACE_ID`              | HF (automatic)     | Forces browser/HTTP mode                              |
+| `RENDER`                | Render (automatic) | Forces browser/HTTP mode                              |
+| `CAMERA_INDEX`          | You (optional)     | Camera device index for local OpenCV. Default `0`     |
+| `MEDIAPIPE_DISABLE_GPU` | Set in code (`1`)  | Forces CPU-only MediaPipe — prevents EGL errors on HF |
+| `CUDA_VISIBLE_DEVICES`  | Set in code (`-1`) | Disables CUDA — CPU-only TF inference                 |
+| `TF_CPP_MIN_LOG_LEVEL`  | Set in code (`2`)  | Suppresses TF deprecation warnings                    |
 
 ---
 
