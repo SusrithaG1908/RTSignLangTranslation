@@ -1,7 +1,6 @@
 """
 Real-Time Sign Language Translator  ·  v8.2
 Streamlit  |  Light & Dark Mode  |  Montserrat font
-
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  ENVIRONMENT VARIABLES                                                       ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -321,7 +320,6 @@ def inject_css(t):
     st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap');
-
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 html, body, [class*="css"] {{
     font-family: 'Montserrat', sans-serif !important;
@@ -335,7 +333,6 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
 ::-webkit-scrollbar {{ width: 6px; }}
 ::-webkit-scrollbar-track {{ background: {t['bg2']}; }}
 ::-webkit-scrollbar-thumb {{ background: {t['border']}; border-radius: 3px; }}
-
 /* ── TOP BAR ── */
 .topbar-left {{ display: flex; align-items: center; gap: 10px; padding-top: 0.4rem; flex-wrap: wrap; }}
 .app-logo {{ font-size: 2rem; line-height: 1; filter: drop-shadow(0 0 8px {t['accent_glow']}); }}
@@ -352,7 +349,6 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
     background: rgba(251,191,36,0.15); color: #fbbf24;
     border: 1px solid rgba(251,191,36,0.45); white-space: nowrap;
 }}
-
 /* ── HERO ── */
 .hero {{ text-align: center; padding: 1rem 0 1.4rem; animation: fadeDown 0.55s ease both; }}
 @keyframes fadeDown {{ from {{ opacity:0; transform:translateY(-16px); }} to {{ opacity:1; transform:translateY(0); }} }}
@@ -362,10 +358,8 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
     line-height: 1.12; letter-spacing: -1px; color: {t['text']}; margin-bottom: 0;
 }}
 .hero h1 span {{ color: {t['title_span']}; }}
-
 /* ── LAYOUT ── */
 .clean-card {{ background: transparent !important; padding: 0 !important; margin: 0 !important; }}
-
 /* ── VIDEO AREA ── */
 .video-off {{
     background: {t['surface2']}; border: 2px dashed {t['border']}; border-radius: 14px;
@@ -389,7 +383,6 @@ video {{
     border-radius: 14px !important; object-fit: cover !important;
     background: {t['bg2']};
 }}
-
 /* ── LIVE DOT ── */
 .live-dot-inline {{
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
@@ -401,7 +394,6 @@ video {{
     70%  {{ box-shadow: 0 0 0 7px rgba(52,211,153,0); }}
     100% {{ box-shadow: 0 0 0 0   rgba(52,211,153,0); }}
 }}
-
 /* ── CHARACTER PANEL ── */
 .char-panel {{
     background: {t['surface2']}; border: 1px solid {t['border']}; border-radius: 16px;
@@ -423,7 +415,6 @@ video {{
     animation: charPop 0.2s cubic-bezier(.34,1.56,.64,1) both;
 }}
 @keyframes charPop {{ from {{ transform: scale(0.65); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}
-
 /* ── CONFIDENCE BAR ── */
 .conf-wrap {{ margin-bottom: 0.9rem; }}
 .conf-row {{ display: flex; align-items: center; gap: 10px; }}
@@ -431,7 +422,6 @@ video {{
 .conf-track {{ flex: 1; height: 8px; background: {t['prog_bg']}; border-radius: 50px; overflow: hidden; border: 1px solid {t['border']}; }}
 .conf-fill {{ height: 100%; border-radius: 50px; transition: width 0.45s cubic-bezier(.4,0,.2,1); }}
 .conf-pct {{ font-size: 0.82rem; font-weight: 700; min-width: 36px; text-align: right; }}
-
 /* ── WORD BOX ── */
 .word-box {{
     background: linear-gradient(135deg, {t['accent_dark']} 0%, {t['accent']} 100%);
@@ -445,7 +435,6 @@ video {{
 }}
 .word-box .wlabel {{ font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; color: rgba(255,255,255,0.65); margin-bottom: 0.4rem; }}
 .word-text {{ font-family: 'Montserrat', sans-serif; font-size: 2.6rem; font-weight: 900; color: #fff; letter-spacing: 0.12em; min-height: 3.2rem; word-break: break-all; text-shadow: 0 2px 12px rgba(0,0,0,0.2); transition: all 0.2s ease; }}
-
 /* ── BUTTONS ── */
 .stButton > button {{
     font-family: 'Montserrat', sans-serif !important; font-weight: 700 !important;
@@ -461,16 +450,13 @@ video {{
 .stButton > button:active {{ transform: scale(0.97) !important; }}
 div.btn-start button {{ background-color: #22c55e !important; color: white !important; border: none !important; }}
 div.btn-stop  button {{ background-color: #ef4444 !important; color: white !important; border: none !important; }}
-
 /* ── Toggles / Selects ── */
 [data-testid="stToggle"] label {{ color: {t['text']} !important; font-family: 'Montserrat', sans-serif !important; font-size: 0.85rem !important; font-weight: 700 !important; }}
 [data-testid="stSelectbox"] label {{ color: {t['text_muted']} !important; font-family: 'Montserrat', sans-serif !important; font-size: 0.72rem !important; font-weight: 700 !important; text-transform: uppercase; letter-spacing: 1px; }}
 [data-testid="stSelectbox"] > div > div {{ background: {t['surface']} !important; border-color: {t['border']} !important; border-radius: 10px !important; color: {t['text']} !important; font-family: 'Montserrat', sans-serif !important; font-weight: 600 !important; }}
-
 /* ── History chips ── */
 .hist-wrap {{ display: flex; flex-wrap: wrap; gap: 7px; margin-top: 0.4rem; }}
 .hist-chip {{ background: {t['chip_bg']}; border: 1px solid {t['border']}; border-radius: 50px; padding: 0.22rem 0.8rem; font-size: 0.82rem; font-weight: 700; color: {t['chip_text']}; }}
-
 /* ── Misc ── */
 .hdivider {{ border: none; border-top: 1px solid {t['border']}; margin: 0.85rem 0; }}
 .banner-warn {{ background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.38); border-radius: 12px; padding: 0.7rem 1rem; font-size: 0.82rem; color: {t['warning']}; margin-bottom: 0.9rem; }}
@@ -913,12 +899,10 @@ with col_vid:
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 html, body {{ background: transparent; font-family: 'Montserrat', sans-serif;
   color: {text_c}; height: 100%; }}
-
 /* ── Layout: video left, results right ── */
 #main {{ display: flex; gap: 16px; align-items: flex-start; width: 100%; }}
 #left  {{ flex: 1.15; min-width: 0; }}
 #right {{ flex: 0.85; display: flex; flex-direction: column; gap: 10px; min-width: 0; }}
-
 /* ── Video ── */
 #wrap {{ position: relative; width: 100%; min-height: 420px; }}
 video {{
@@ -946,7 +930,6 @@ video {{
 #btn.running {{ background: #ef4444; border-color: #ef4444; color: #fff; }}
 #btn:hover {{ border-color: {accent}; color: {accent}; }}
 #btn.running:hover {{ background: #dc2626; border-color: #dc2626; color: #fff; }}
-
 /* ── Detected Character panel ── */
 #char-panel {{
   background: {surface2}; border: 1px solid {border}; border-radius: 16px;
@@ -965,7 +948,6 @@ video {{
   font-size: 6rem; font-weight: 900; color: {accent}; line-height: 1;
   text-shadow: 0 0 40px {accent_glow};
 }}
-
 /* ── Confidence bar ── */
 #conf-wrap {{ margin-bottom: 0; }}
 .conf-row {{ display: flex; align-items: center; gap: 10px; }}
@@ -977,7 +959,6 @@ video {{
   transition: width 0.3s cubic-bezier(.4,0,.2,1); background: {danger}; }}
 #conf-pct {{ font-size: 0.82rem; font-weight: 700; min-width: 36px;
   text-align: right; color: {danger}; }}
-
 /* ── Formed Word box ── */
 #word-box {{
   background: linear-gradient(135deg, {accent_dark} 0%, {accent} 100%);
@@ -996,7 +977,6 @@ video {{
   min-height: 3.2rem; word-break: break-all;
   text-shadow: 0 2px 12px rgba(0,0,0,0.2);
 }}
-
 /* ── Action buttons ── */
 #actions {{ display: flex; gap: 8px; }}
 .act-btn {{
@@ -1006,7 +986,6 @@ video {{
   font-weight: 700; font-size: 0.78rem; cursor: pointer; transition: all 0.2s;
 }}
 .act-btn:hover {{ border-color: {accent}; color: {accent}; background: {surface2}; }}
-
 /* ── History chips ── */
 #history {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }}
 .hist-chip {{
@@ -1027,14 +1006,12 @@ video {{
     <div id="status">Click ▶ Start Camera to begin</div>
     <button id="btn" onclick="toggleCamera()">▶ Start Camera</button>
   </div>
-
   <!-- Right: result components matching Streamlit design exactly -->
   <div id="right">
     <div id="char-panel">
       <div class="clabel">Detected Character</div>
       <div id="char-big">–</div>
     </div>
-
     <div id="conf-wrap">
       <div class="conf-row">
         <span class="conf-label">Confidence</span>
@@ -1042,22 +1019,18 @@ video {{
         <span id="conf-pct">0%</span>
       </div>
     </div>
-
     <div id="word-box">
       <div class="wlabel">Formed Word</div>
       <div id="word-text">…</div>
     </div>
-
     <div id="actions">
       <button class="act-btn" onclick="speakWord()">🔊 Speak</button>
       <button class="act-btn" onclick="deleteChar()">⌫ Delete</button>
       <button class="act-btn" onclick="resetAll()">🔄 Reset</button>
     </div>
-
     <div id="history"></div>
   </div>
 </div>
-
 <script>
 const video    = document.getElementById('cam');
 const canvas   = document.getElementById('canvas');
@@ -1070,28 +1043,23 @@ const confFill = document.getElementById('conf-fill');
 const confPct  = document.getElementById('conf-pct');
 const wordText = document.getElementById('word-text');
 const histDiv  = document.getElementById('history');
-
 const MIRROR = {mirror_js};
 const THRESH = 0.70;
 const SUCCESS = '{success}';
 const WARNING = '{warning}';
 const DANGER  = '{danger}';
-
 let running    = false;
 let stream     = null;
 let intervalId = null;
 let framesSent = 0;
 let history    = [];
-
 const IS_CLOUD   = {is_cloud_js};
 // On real HF deployment nginx proxies /predict at the same origin.
 // In local cloud simulation there is no nginx — post directly to the predict server.
 const predictUrl = IS_CLOUD ? '/predict' : 'http://localhost:8000/predict';
-
 function toggleCamera() {{
   if (!running) startCamera(); else stopCamera();
 }}
-
 async function startCamera() {{
   try {{
     stream = await navigator.mediaDevices.getUserMedia({{
@@ -1109,7 +1077,6 @@ async function startCamera() {{
     statusEl.textContent = '❌ Camera error: ' + e.message;
   }}
 }}
-
 function stopCamera() {{
   clearInterval(intervalId);
   if (stream) stream.getTracks().forEach(t => t.stop());
@@ -1121,7 +1088,6 @@ function stopCamera() {{
   statusEl.textContent = 'Camera stopped.';
   framesSent = 0;
 }}
-
 async function sendFrame() {{
   if (!running || video.readyState < 2) return;
   ctx.save();
@@ -1144,28 +1110,22 @@ async function sendFrame() {{
     statusEl.textContent = '⚠️ Backend unreachable — retrying…';
   }}
 }}
-
 function updateResults(char, conf, word) {{
   const active = char && char !== '–' && conf >= THRESH;
   const pct    = Math.round(conf * 100);
   const color  = conf >= 0.80 ? SUCCESS : (conf >= THRESH ? WARNING : DANGER);
-
   // Video overlay
   overlay.textContent = active ? char + '  ' + pct + '%' : '';
-
   // Detected character
   charBig.textContent = active ? char : '–';
-
   // Confidence bar
   confFill.style.width      = pct + '%';
   confFill.style.background = color;
   confPct.textContent       = pct + '%';
   confPct.style.color       = color;
-
   // Formed word
   wordText.textContent = word || '…';
 }}
-
 function speakWord() {{
   const w = wordText.textContent;
   if (!w || w === '…') return;
@@ -1176,7 +1136,6 @@ function speakWord() {{
     window.speechSynthesis.speak(u);
   }}
 }}
-
 function deleteChar() {{
   const actUrl = IS_CLOUD ? '/predict' : 'http://localhost:8000/predict';
   fetch(actUrl, {{   // delete char
@@ -1187,7 +1146,6 @@ function deleteChar() {{
     wordText.textContent = d.word || '…';
   }});
 }}
-
 function resetAll() {{
   const w = wordText.textContent;
   if (w && w !== '…') {{
@@ -1207,7 +1165,6 @@ function resetAll() {{
     overlay.textContent  = '';
   }});
 }}
-
 function renderHistory() {{
   histDiv.innerHTML = history.map(w =>
     '<span class="hist-chip">' + w + '</span>'
