@@ -1,5 +1,5 @@
 """
-Real-Time Sign Language Translator  ·  v7.0
+Real-Time Sign Language Translator  ·  v8.2
 Streamlit  |  Light & Dark Mode  |  Montserrat font
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9,35 +9,140 @@ Streamlit  |  Light & Dark Mode  |  Montserrat font
 ║  CAMERA_INDEX    Camera device index for local mode. Default "0".           ║
 ║  RENDER          Auto-set by Render → forces browser mode                   ║
 ║  SPACE_ID        Auto-set by Hugging Face → forces browser mode             ║
-║  PYTHON_VERSION  Set to "3.11.0" in Render env vars panel                  ║
 ║                                                                              ║
-║  Test browser mode locally:                                                  ║
-║    Windows  : set RUN_MODE=browser && streamlit run scripts/app.py          ║
-║    Mac/Linux: RUN_MODE=browser streamlit run scripts/app.py                 ║
+║  Architecture (v8.1):                                                        ║
+║    LOCAL  : OpenCV loop → st.image()                                        ║
+║    CLOUD  : Browser JS captures webcam → POST /predict (FastAPI)            ║
+║             → MediaPipe + TF inference → JSON response → UI update          ║
+║             No WebRTC, no TURN servers, no ICE negotiation.                 ║
+║                                                                              ║
+║  Cloud simulation (v8.1 new):                                                ║
+║    When running locally a "☁ Cloud" toggle appears in the top bar.          ║
+║    Switching it on starts FastAPI on port 8000 and activates the browser    ║
+║    JS camera widget — exactly as it runs on Hugging Face — so you can       ║
+║    fully test the cloud path before deploying.                              ║
+║    On real cloud (SPACE_ID / RENDER set) the toggle is hidden and browser   ║
+║    mode is always active.                                                    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 import os
 
-# Detect Hugging Face (or any cloud)
-IS_CLOUD = os.environ.get("SPACE_ID") is not None
+# ── MUST be before ANY other imports ──────────────────────────────────────────
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"]  = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"]  = "2"
 
-# Fix MediaPipe + TensorFlow for cloud only
-if IS_CLOUD:
-    # Force MediaPipe to use CPU (critical for Hugging Face)
-    os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-import streamlit as st
-import streamlit.components.v1 as components
-import cv2
-import numpy as np
+import importlib
 import json
 import threading
 import time
-import os
-import importlib
-import av
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+
+import base64
+import cv2
+import numpy as np
+import streamlit as st
+import streamlit.components.v1 as components
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ENVIRONMENT DETECTION
+#  IS_CLOUD  → True only on real deployment (env var set by HF / Render).
+#              The UI toggle is hidden; browser mode is locked on.
+#  IS_CLOUD  → False on local machine.
+#              A "☁ Cloud" toggle lets you switch to browser/HTTP mode for
+#              pre-deployment testing without restarting Streamlit.
+# ─────────────────────────────────────────────────────────────────────────────
+def _detect_run_mode() -> str:
+    if os.getenv("RENDER") == "true" or os.getenv("SPACE_ID") is not None:
+        return "browser"
+    return os.getenv("RUN_MODE", "local").lower()
+
+RUN_MODE = _detect_run_mode()
+IS_CLOUD = RUN_MODE == "browser"   # True only on real cloud deployment
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PREDICT HTTP SERVER
+#
+#  Uses Python's built-in http.server — zero extra dependencies, no uvicorn,
+#  nothing that can be auto-discovered or accidentally launched by the venv.
+#
+#  Listens on port 8000. Started in a daemon thread only when:
+#    • IS_CLOUD is True  (real HF/Render deployment — started immediately)
+#    • ☁ Cloud toggle is turned on locally (started on demand, once)
+#
+#  _api_* module-level references are filled after model/mediapipe load below.
+# ─────────────────────────────────────────────────────────────────────────────
+_api_model     = None
+_api_labels    = None
+_api_mp_mod    = None
+_api_mp_draw   = None
+_api_hands_det = None
+
+_predict_server_started = threading.Event()   # guard: start at most once
+
+def _ensure_predict_server_running():
+    """
+    Start a lightweight HTTP predict server using only stdlib http.server.
+    No uvicorn, no FastAPI, no ASGI — nothing that can be auto-discovered.
+    Safe to call multiple times — only the first call does any work.
+    """
+    if _predict_server_started.is_set():
+        return
+    _predict_server_started.set()
+
+    import json as _json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class _PredictHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass  # suppress request logs
+
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self._cors()
+            self.end_headers()
+
+        def do_POST(self):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body   = _json.loads(self.rfile.read(length))
+                img_bytes = base64.b64decode(body["image"])
+                arr       = np.frombuffer(img_bytes, np.uint8)
+                frame     = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise ValueError("Could not decode image")
+                if body.get("mirror", False):
+                    frame = cv2.flip(frame, 1)
+                _, char, conf = _apply_pipeline(
+                    frame,
+                    _api_model, _api_labels,
+                    _api_mp_mod, _api_mp_draw, _api_hands_det,
+                )
+                result = {"char": char or "–", "conf": round(float(conf), 3)}
+            except Exception as exc:
+                result = {"char": "–", "conf": 0.0, "error": str(exc)}
+
+            payload = _json.dumps(result).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _cors(self):
+            self.send_header("Access-Control-Allow-Origin",  "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _run():
+        server = HTTPServer(("0.0.0.0", 8000), _PredictHandler)
+        server.serve_forever()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+# On real cloud deployment start the server before the first Streamlit render
+if IS_CLOUD:
+    _ensure_predict_server_running()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PAGE CONFIG  (must be first Streamlit call)
@@ -50,34 +155,32 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ENVIRONMENT DETECTION
-# ─────────────────────────────────────────────────────────────────────────────
-def _detect_run_mode() -> str:
-    if os.getenv("RENDER") == "true" or os.getenv("SPACE_ID") is not None:
-        return "browser"
-    return os.getenv("RUN_MODE", "local").lower()
-
-RUN_MODE = _detect_run_mode()
-IS_CLOUD = RUN_MODE == "browser"
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
 _DEFAULTS = {
-    "word":         "",
-    "history":      [],
-    "last_char":    "–",
-    "last_conf":    0.0,
-    "stable_buf":   [],
-    "run_camera":   False,
-    "frame_count":  0,
-    "dark_mode":    True,
-    "mirror":       True,
-    "run_mode":     RUN_MODE,
+    "word":           "",
+    "history":        [],
+    "last_char":      "–",
+    "last_conf":      0.0,
+    "stable_buf":     [],
+    "run_camera":     False,
+    "frame_count":    0,
+    "dark_mode":      True,
+    "mirror":         True,
+    "run_mode":       RUN_MODE,
+    # simulate_cloud: local-only toggle; always False on real cloud
+    "simulate_cloud": False,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# Derive the active mode for this render cycle:
+#   real cloud              → always "browser"
+#   local + sim toggle on   → "browser"
+#   local + sim toggle off  → "local"
+ACTIVE_MODE = "browser" if (IS_CLOUD or st.session_state.simulate_cloud) else "local"
+st.session_state.run_mode = ACTIVE_MODE
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  THEME TOKENS
@@ -162,6 +265,12 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
     padding: 0.2rem 0.7rem; border-radius: 50px;
     background: {t['chip_bg']}; color: {t['chip_text']}; border: 1px solid {t['border']}; white-space: nowrap;
 }}
+.sim-badge {{
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    padding: 0.2rem 0.7rem; border-radius: 50px;
+    background: rgba(251,191,36,0.15); color: #fbbf24;
+    border: 1px solid rgba(251,191,36,0.45); white-space: nowrap;
+}}
 
 /* ── HERO ── */
 .hero {{ text-align: center; padding: 1rem 0 1.4rem; animation: fadeDown 0.55s ease both; }}
@@ -186,7 +295,6 @@ section[data-testid="stSidebar"] {{ display: none !important; }}
 .video-off .icon {{ font-size: 3.5rem; opacity: 0.5; }}
 .video-off .msg  {{ font-weight: 700; font-size: 0.95rem; }}
 .video-off .sub  {{ font-size: 0.8rem; opacity: 0.65; }}
-
 [data-testid="stImage"] img {{
     border-radius: 14px !important; width: 100% !important;
     max-height: 520px !important; object-fit: cover !important; display: block !important;
@@ -285,6 +393,7 @@ div.btn-stop  button {{ background-color: #ef4444 !important; color: white !impo
 /* ── Misc ── */
 .hdivider {{ border: none; border-top: 1px solid {t['border']}; margin: 0.85rem 0; }}
 .banner-warn {{ background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.38); border-radius: 12px; padding: 0.7rem 1rem; font-size: 0.82rem; color: {t['warning']}; margin-bottom: 0.9rem; }}
+.banner-info {{ background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.30); border-radius: 12px; padding: 0.7rem 1rem; font-size: 0.82rem; color: {t['accent']}; margin-bottom: 0.9rem; }}
 .fc-badge {{ text-align:center; padding-top:0.45rem; font-size:0.72rem; font-weight:700; color:{t['text_muted']}; }}
 .footer {{ text-align: center; padding: 1.8rem 0 0.4rem; font-size: 0.76rem; color: {t['text_muted']}; border-top: 1px solid {t['border']}; margin-top: 2rem; }}
 .footer strong {{ color: {t['accent']}; }}
@@ -303,46 +412,6 @@ IMG_SIZE    = 224
 CONF_THRESH = 0.70
 STABILITY_N = 8
 
-if IS_CLOUD:
-    # Cloud → needs TURN
-    RTC_CONFIGURATION = {
-        "iceServers": [
-            # STUN (discovery)
-            {"urls": "stun:stun.l.google.com:19302"},
-
-            # TURN (UDP)
-            {
-                "urls": "turn:openrelay.metered.ca:80",
-                "username": "openrelayproject",
-                "credential": "openrelayproject",
-            },
-
-            # TURN (TCP fallback)
-            {
-                "urls": "turn:openrelay.metered.ca:443?transport=tcp",
-                "username": "openrelayproject",
-                "credential": "openrelayproject",
-            },
-
-            # TURN (TLS fallback - most reliable)
-            {
-                "urls": "turns:openrelay.metered.ca:443",
-                "username": "openrelayproject",
-                "credential": "openrelayproject",
-            },
-        ],
-
-        # Force relay (VERY IMPORTANT for Hugging Face)
-        "iceTransportPolicy": "relay",
-    }
-else:
-    # Local → STUN is enough
-    RTC_CONFIGURATION = {
-        "iceServers": [{"urls": "stun:stun.l.google.com:19302"}]
-    }
-
-# run_mode is determined entirely by IS_CLOUD — no user selection locally
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,18 +426,14 @@ def try_import(name):
 #  TTS
 # ─────────────────────────────────────────────────────────────────────────────
 def speak_text(text: str):
-    if st.session_state.get("run_mode", RUN_MODE) == "browser":
+    if ACTIVE_MODE == "browser":
         _speak_browser(text)
     else:
         _speak_local(text)
 
 
 def _speak_browser(text: str):
-    """
-    Executes Web Speech API in the user's browser.
-    Written into _tts_slot — a pre-allocated empty outside the columns —
-    so no iframe injection disrupts the column layout.
-    """
+    """Inject Web Speech API into _tts_slot (zero-height, outside columns)."""
     safe = (text.replace("\\", "\\\\")
                 .replace("'", "\\'")
                 .replace('"', '\\"')
@@ -442,14 +507,15 @@ def get_hands_detector():
     hands = mp.solutions.hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
-        min_detection_confidence=0.65,
-        min_tracking_confidence=0.55,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+        model_complexity=0 if IS_CLOUD else 1,
     )
     return mp, mp.solutions.drawing_utils, hands, None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  PREDICTION HELPERS
+#  PREDICTION PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 def extract_hand_roi(frame, hand_landmarks, padding=30):
     h, w = frame.shape[:2]
@@ -490,12 +556,13 @@ def draw_overlay(frame_rgb, bbox, char, conf, theme):
 
 
 def _apply_pipeline(img, model, labels, mp_mod, mp_draw, hands_det):
-    rgb  = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    """Run MediaPipe + model on a BGR frame. Used by both modes."""
+    rgb   = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     char, conf = None, 0.0
     if model is not None and hands_det is not None:
         detection = hands_det.process(rgb)
         if detection.multi_hand_landmarks:
-            hl  = detection.multi_hand_landmarks[0]
+            hl = detection.multi_hand_landmarks[0]
             roi, bbox = extract_hand_roi(img, hl)
             if roi.size > 0:
                 char, conf = predict_character(model, labels, roi)
@@ -511,72 +578,29 @@ def _apply_pipeline(img, model, labels, mp_mod, mp_draw, hands_det):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  WEBRTC PROCESSOR  (cloud browser mode only)
-# ─────────────────────────────────────────────────────────────────────────────
-class SignLanguageProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.model, self.labels, _ = load_model_and_labels()
-        self.mp_mod, self.mp_draw, self.hands_det, _ = get_hands_detector()
-        self._stable_buf: list[str] = []
-        self._word  = ""
-        self._lock  = threading.Lock()
-        self.result = {"char": "–", "conf": 0.0, "word": ""}
-
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        if st.session_state.get("mirror", True):
-            img = cv2.flip(img, 1)
-        rgb, char, conf = _apply_pipeline(
-            img, self.model, self.labels,
-            self.mp_mod, self.mp_draw, self.hands_det,
-        )
-        with self._lock:
-            if char and conf >= CONF_THRESH:
-                self._stable_buf.append(char)
-                if len(self._stable_buf) > STABILITY_N:
-                    self._stable_buf.pop(0)
-                if (len(self._stable_buf) == STABILITY_N
-                        and len(set(self._stable_buf)) == 1):
-                    if not self._word or self._word[-1] != char:
-                        self._word += char
-                    self._stable_buf.clear()
-                self.result = {"char": char, "conf": conf, "word": self._word}
-            else:
-                if self._stable_buf:
-                    self._stable_buf.pop(0)
-                self.result = {"char": char or "–", "conf": conf, "word": self._word}
-        return av.VideoFrame.from_ndarray(rgb, format="rgb24")
-
-    def reset_word(self):
-        with self._lock:
-            self._word = ""
-            self._stable_buf.clear()
-            self.result = {"char": "–", "conf": 0.0, "word": ""}
-
-    def delete_last(self):
-        with self._lock:
-            self._word = self._word[:-1]
-            self.result["word"] = self._word
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  LOAD RESOURCES
+#  LOAD RESOURCES  &  wire into FastAPI endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 model, labels, model_err           = load_model_and_labels()
 mp_mod, mp_draw, hands_det, mp_err = get_hands_detector()
 
+_api_model     = model
+_api_labels    = labels
+_api_mp_mod    = mp_mod
+_api_mp_draw   = mp_draw
+_api_hands_det = hands_det
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  TOP BAR
 # ─────────────────────────────────────────────────────────────────────────────
 if IS_CLOUD:
-    st.session_state.run_mode = "browser"
-
-_active_mode = st.session_state.get("run_mode", RUN_MODE)
-if _active_mode == "browser":
-    _env_label = "☁️ Cloud · WebRTC"
+    _env_label   = "☁️ Cloud · HTTP Fetch"
+    _badge_class = "env-badge"
+elif st.session_state.simulate_cloud:
+    _env_label   = "🧪 Simulated Cloud · HTTP Fetch"
+    _badge_class = "sim-badge"
 else:
-    _env_label = "💻 Local · OpenCV"
+    _env_label   = "💻 Local · OpenCV"
+    _badge_class = "env-badge"
 
 tb_l, tb_r = st.columns([3, 1])
 with tb_l:
@@ -584,10 +608,38 @@ with tb_l:
     <div class="topbar-left">
         <span class="app-logo">🤟</span>
         <span class="app-name">Sign<span>Lang</span> AI</span>
-        <span class="env-badge">{_env_label}</span>
+        <span class="{_badge_class}">{_env_label}</span>
     </div>""", unsafe_allow_html=True)
+
 with tb_r:
-    tr1, tr2 = st.columns([1, 1])
+    # On real cloud: Mirror + Dark/Light only (2 columns)
+    # Locally:       ☁ Cloud + Mirror + Dark/Light (3 columns)
+    if not IS_CLOUD:
+        tr0, tr1, tr2 = st.columns([1.2, 1, 1])
+        with tr0:
+            prev_sim = st.session_state.simulate_cloud
+            new_sim  = st.toggle(
+                "☁ Cloud", value=prev_sim, key="sim_toggle",
+                help="Simulate Hugging Face cloud mode locally.\n"
+                     "Starts FastAPI on :8000 and switches to the\n"
+                     "browser JS camera widget instead of OpenCV.\n"
+                     "Toggle off to return to local OpenCV mode.",
+            )
+            if new_sim != prev_sim:
+                st.session_state.simulate_cloud = new_sim
+                # Reset all camera/word state so neither mode inherits stale values
+                st.session_state.run_camera  = False
+                st.session_state.word        = ""
+                st.session_state.stable_buf  = []
+                st.session_state.last_char   = "–"
+                st.session_state.last_conf   = 0.0
+                st.session_state.frame_count = 0
+                if new_sim:
+                    _ensure_predict_server_running()
+                st.rerun()
+    else:
+        tr1, tr2 = st.columns([1, 1])
+
     with tr1:
         st.session_state.mirror = st.toggle(
             "🪞 Mirror", value=st.session_state.mirror, key="top_mirror")
@@ -607,21 +659,18 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
-# ===================== WEBRTC TEST MODE =====================
-if IS_CLOUD:
-    test_mode = st.selectbox("Select Mode", ["Full App", "WebRTC Test"])
-
-    if test_mode == "WebRTC Test":
-        st.write("Testing camera only (no ML model)")
-
-        webrtc_streamer(
-            key="test",
-            rtc_configuration=RTC_CONFIGURATION
-        )
-
-        st.stop()
-# ===========================================================
+# ─────────────────────────────────────────────────────────────────────────────
+#  INFO BANNER  (local cloud-simulation only)
+# ─────────────────────────────────────────────────────────────────────────────
+if not IS_CLOUD and st.session_state.simulate_cloud:
+    st.markdown(
+        '<div class="banner-info">🧪 <b>Cloud simulation active.</b> '
+        'FastAPI is running on <code>localhost:8000</code>. '
+        'The browser JS camera widget is POSTing frames to <code>/predict</code> '
+        'exactly as it will on Hugging Face. '
+        'Toggle <b>☁ Cloud</b> off to return to local OpenCV mode.</div>',
+        unsafe_allow_html=True,
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ERROR BANNERS
@@ -638,14 +687,13 @@ if model_err or mp_err:
 # ─────────────────────────────────────────────────────────────────────────────
 #  LAYOUT
 # ─────────────────────────────────────────────────────────────────────────────
-# _tts_slot: pre-declared outside columns so speak_text() can write into it
-# without disrupting column layout. Renders zero pixels.
+# _tts_slot: zero-height placeholder outside columns for browser TTS injection
 _tts_slot = st.empty()
 
 col_vid, col_out = st.columns([1.15, 0.85], gap="large")
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RIGHT — output panel
+#  RIGHT — output panel  (shared by both modes)
 # ══════════════════════════════════════════════════════════════════════════════
 with col_out:
     st.markdown('<div class="clean-card">', unsafe_allow_html=True)
@@ -717,79 +765,215 @@ with col_out:
         )
         st.markdown(f'<div class="hist-wrap">{chips}</div>', unsafe_allow_html=True)
 
-    # Settings — only shown locally, only one mode available (OpenCV)
-    # Browser/WebRTC mode is cloud-only and activates automatically via IS_CLOUD.
-    if not IS_CLOUD:
-        st.session_state.run_mode = "local"   # enforce local mode on local machine
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  LEFT — video panel  (display only — no buttons, no controls)
+#  LEFT — video panel
 # ══════════════════════════════════════════════════════════════════════════════
 with col_vid:
     st.markdown('<div class="clean-card">', unsafe_allow_html=True)
 
-    active_mode = st.session_state.run_mode
-
-    if active_mode == "browser":
-        # Cloud-only: WebRTC streaming
+    # ── BROWSER MODE (real cloud or local simulation) ─────────────────────────
+    if ACTIVE_MODE == "browser":
         st.markdown(
             f'<div style="font-size:0.72rem;font-weight:700;color:{T["text_muted"]};'
             f'margin-bottom:0.5rem;"><span class="live-dot-inline"></span>'
-            f'WebRTC · Browser Camera · Web Speech TTS</div>',
+            f'Browser Camera · HTTP Fetch · Web Speech TTS</div>',
             unsafe_allow_html=True,
         )
-        ctx = webrtc_streamer(
-            key="sign-lang-webrtc",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIGURATION,
-            video_processor_factory=SignLanguageProcessor,
-            media_stream_constraints={
-                "video": {
-                    "width": 640,
-                    "height": 480,
-                    "frameRate": 15,   # 🔥 IMPORTANT (reduces lag)
-                },
-                "audio": False,
-            },
-            async_processing=True,
-            # 🔥 NEW (stability)
-            video_html_attrs={
-                "autoPlay": True,
-                "playsInline": True,
-                "muted": True,
-            },
-            translations={
-                "start": "▶ Start Camera",
-                "stop":  "⏹ Stop Camera",
-            },
-        )
-        if ctx.state.playing and ctx.video_processor:
-            result = ctx.video_processor.result
-            char = result.get("char", "–")
-            conf = result.get("conf", 0.0)
-            word = result.get("word", "")
 
-            st.session_state.last_char = char
-            st.session_state.last_conf = conf
-            st.session_state.word      = word
+        mirror_js = "true" if st.session_state.mirror else "false"
+        accent    = T["accent"]
+        bg2       = T["bg2"]
+        text_c    = T["text"]
+        muted     = T["text_muted"]
+        success   = T["success"]
+        warning   = T["warning"]
+        danger    = T["danger"]
+        border    = T["border"]
 
-            render_char_conf(char, conf)
-            render_word(word)
+        browser_widget = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: transparent; font-family: 'Montserrat', sans-serif; }}
+  #wrap {{ position: relative; width: 100%; }}
+  video {{
+    width: 100%; border-radius: 14px; display: block;
+    background: {bg2}; max-height: 420px; object-fit: cover;
+  }}
+  #overlay {{
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.55); border-radius: 10px;
+    padding: 6px 12px; font-size: 1.1rem; font-weight: 800;
+    color: #fff; display: none;
+  }}
+  #status {{
+    margin-top: 8px; font-size: 0.75rem; font-weight: 700;
+    color: {muted}; text-align: center;
+  }}
+  #btn {{
+    display: block; margin: 10px auto 0; padding: 0.5rem 2rem;
+    border-radius: 50px; border: 2px solid {border};
+    background: transparent; color: {text_c};
+    font-family: 'Montserrat', sans-serif; font-weight: 700;
+    font-size: 0.86rem; cursor: pointer; transition: all 0.2s;
+  }}
+  #btn.running {{ background: #ef4444; border-color: #ef4444; color: #fff; }}
+  #btn:hover {{ border-color: {accent}; color: {accent}; }}
+  #btn.running:hover {{ background: #dc2626; border-color: #dc2626; color: #fff; }}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="canvas" style="display:none" width="320" height="240"></canvas>
+  <div id="overlay"></div>
+</div>
+<div id="status">Click ▶ Start Camera to begin</div>
+<button id="btn" onclick="toggleCamera()">▶ Start Camera</button>
 
+<script>
+const video   = document.getElementById('cam');
+const canvas  = document.getElementById('canvas');
+const overlay = document.getElementById('overlay');
+const status  = document.getElementById('status');
+const btn     = document.getElementById('btn');
+const ctx     = canvas.getContext('2d');
+const MIRROR  = {mirror_js};
+const THRESH  = 0.70;
+const STAB_N  = 8;
+
+let stableBuf  = [];
+let word       = '';
+let running    = false;
+let stream     = null;
+let intervalId = null;
+let framesSent = 0;
+
+function toggleCamera() {{
+  if (!running) startCamera(); else stopCamera();
+}}
+
+async function startCamera() {{
+  try {{
+    stream = await navigator.mediaDevices.getUserMedia({{
+      video: {{ width: 640, height: 480, facingMode: 'user' }},
+      audio: false,
+    }});
+    video.srcObject = stream;
+    await video.play();
+    running = true;
+    btn.textContent = '⏹ Stop Camera';
+    btn.classList.add('running');
+    status.textContent = 'Camera live — detecting…';
+    overlay.style.display = 'block';
+    intervalId = setInterval(sendFrame, 200);   // 5 fps
+  }} catch(e) {{
+    status.textContent = '❌ Camera error: ' + e.message;
+  }}
+}}
+
+function stopCamera() {{
+  clearInterval(intervalId);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+  running = false;
+  btn.textContent = '▶ Start Camera';
+  btn.classList.remove('running');
+  overlay.style.display = 'none';
+  status.textContent = 'Camera stopped.';
+  framesSent = 0;
+}}
+
+async function sendFrame() {{
+  if (!running || video.readyState < 2) return;
+
+  ctx.save();
+  if (MIRROR) {{
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+  }}
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  const b64 = canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+
+  try {{
+    const resp = await fetch('http://localhost:8000/predict', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ image: b64, mirror: false }}),
+    }});
+    if (!resp.ok) return;
+    const data = await resp.json();
+    framesSent++;
+    processResult(data.char, data.conf);
+    status.textContent = `Frames sent: ${{framesSent}} · Last: ${{data.char}} (${{Math.round(data.conf*100)}}%)`;
+  }} catch(e) {{
+    status.textContent = '⚠️ Backend unreachable — retrying…';
+  }}
+}}
+
+function processResult(char, conf) {{
+  if (char && char !== '–' && conf >= THRESH) {{
+    overlay.textContent = char + '  ' + Math.round(conf * 100) + '%';
+    overlay.style.color = conf >= 0.80 ? '{success}' : (conf >= THRESH ? '{warning}' : '{danger}');
+    stableBuf.push(char);
+    if (stableBuf.length > STAB_N) stableBuf.shift();
+    if (stableBuf.length === STAB_N && new Set(stableBuf).size === 1) {{
+      if (!word || word[word.length-1] !== char) word += char;
+      stableBuf = [];
+    }}
+  }} else {{
+    if (stableBuf.length) stableBuf.shift();
+    overlay.textContent = char === '–' ? '' : (char || '');
+  }}
+  window.parent.postMessage({{
+    type: 'signlang',
+    char: (char && conf >= THRESH) ? char : '–',
+    conf: conf,
+    word: word,
+  }}, '*');
+}}
+</script>
+</body>
+</html>
+"""
+        components.html(browser_widget, height=520, scrolling=False)
+
+        st.markdown("""
+<script>
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'signlang') return;
+  const p = new URLSearchParams(window.location.search);
+  p.set('sl_char', e.data.char  || '–');
+  p.set('sl_conf', (e.data.conf || 0).toFixed(3));
+  p.set('sl_word', e.data.word  || '');
+  window.history.replaceState({}, '', '?' + p.toString());
+}, false);
+</script>
+""", unsafe_allow_html=True)
+
+        qp      = st.query_params
+        sl_char = qp.get("sl_char", st.session_state.last_char)
+        sl_conf = float(qp.get("sl_conf", st.session_state.last_conf))
+        sl_word = qp.get("sl_word", st.session_state.word)
+
+        if sl_char != st.session_state.last_char or sl_word != st.session_state.word:
+            st.session_state.last_char = sl_char
+            st.session_state.last_conf = sl_conf
+            st.session_state.word      = sl_word
+            render_char_conf(sl_char, sl_conf)
+            render_word(sl_word)
+
+    # ── LOCAL MODE: unchanged OpenCV loop ─────────────────────────────────────
     else:
-        # Local OpenCV mode — mirrors snapshot mode structure exactly:
-        #   label row  →  Start/Stop buttons  →  video area
-        #
-        # video_slot is declared HERE inside the column so it occupies the
-        # correct visual position. The camera loop (after footer) holds the
-        # same reference and writes frames into it — st.empty() references
-        # remain valid and writable from anywhere in the script.
-
-        # Status label — mirrors snapshot mode's label exactly
-        dot = '<span class="live-dot-inline"></span>' if st.session_state.run_camera else ""
+        dot    = '<span class="live-dot-inline"></span>' if st.session_state.run_camera else ""
         status = "Live · OpenCV · pyttsx3 TTS" if st.session_state.run_camera else "OpenCV · pyttsx3 TTS"
         st.markdown(
             f'<div style="font-size:0.72rem;font-weight:700;color:{T["text_muted"]};'
@@ -797,8 +981,6 @@ with col_vid:
             unsafe_allow_html=True,
         )
 
-        # Video area — declared inside the column so it sits in the right place.
-        # The camera loop below writes frames here via this reference.
         video_slot = st.empty()
         if not st.session_state.run_camera:
             video_slot.markdown("""
@@ -808,8 +990,6 @@ with col_vid:
                 <div class="sub">Press ▶ Start to begin detection</div>
             </div>""", unsafe_allow_html=True)
         else:
-            # Write a loading placeholder so the slot has height and is visible
-            # in the column. The camera loop overwrites this with real frames.
             video_slot.markdown("""
             <div class="video-off">
                 <div class="icon">⏳</div>
@@ -817,7 +997,6 @@ with col_vid:
                 <div class="sub">First frame loading</div>
             </div>""", unsafe_allow_html=True)
 
-        # Start / Stop row — below video
         st.markdown('<div style="margin-top:0.6rem;"></div>', unsafe_allow_html=True)
         vc1, vc2, vc3 = st.columns([1, 1, 1])
         with vc1:
@@ -846,9 +1025,8 @@ with col_vid:
 # ─────────────────────────────────────────────────────────────────────────────
 #  FOOTER
 # ─────────────────────────────────────────────────────────────────────────────
-_mode = st.session_state.run_mode
-tts_tech = "Web Speech API" if _mode == "browser" else "pyttsx3"
-cam_tech = "WebRTC" if _mode == "browser" else "OpenCV"
+tts_tech = "Web Speech API" if ACTIVE_MODE == "browser" else "pyttsx3"
+cam_tech = "HTTP Fetch (no WebRTC)" if ACTIVE_MODE == "browser" else "OpenCV"
 st.markdown(f"""
 <div class="footer">
     Built with 🤟 using
@@ -858,24 +1036,23 @@ st.markdown(f"""
     <strong>OpenCV</strong> ·
     <strong>{cam_tech}</strong> ·
     <strong>{tts_tech}</strong>
-    &nbsp;—&nbsp; Sign Language Translator v7.0
+    &nbsp;—&nbsp; Sign Language Translator v8.1
 </div>
 """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  LOCAL CAMERA LOOP
-#  Runs AFTER all columns have rendered — including Start/Stop buttons which
-#  are now inside col_vid above the video area.
-#  video_slot was declared inside col_vid; its reference is valid here.
+#  LOCAL CAMERA LOOP  (runs only when ACTIVE_MODE == "local")
+#
+#  video_slot is declared inside col_vid above. Its reference stays valid here.
 #  Stop sets run_camera=False → next rerun skips this block entirely.
 # ─────────────────────────────────────────────────────────────────────────────
-if st.session_state.run_mode == "local" and st.session_state.run_camera:
+if ACTIVE_MODE == "local" and st.session_state.run_camera:
     cam_idx = int(os.getenv("CAMERA_INDEX", "0"))
     cap = cv2.VideoCapture(cam_idx)
     if not cap.isOpened():
         with col_vid:
-            st.error(f"❌ Could not open camera {cam_idx}. Check Camera Device selection.")
+            st.error(f"❌ Could not open camera {cam_idx}. Check CAMERA_INDEX env var.")
         st.session_state.run_camera = False
         st.stop()
 

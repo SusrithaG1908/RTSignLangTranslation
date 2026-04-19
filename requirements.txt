@@ -5,8 +5,11 @@
 #  Key differences from requirements-local.txt:
 #    opencv-python-headless  instead of  opencv-contrib-python  (no display)
 #    tensorflow only         instead of  tensorflow + tensorflow-intel (Linux)
-#    streamlit-webrtc added  (WebRTC webcam support)
-#    aiortc + av added       (WebRTC transport and frame decoding)
+#    fastapi + uvicorn added (HTTP predict endpoint — replaces streamlit-webrtc)
+#    pydantic added          (FastAPI request body model)
+#    streamlit-webrtc removed  (replaced by browser JS + HTTP fetch in v8.0)
+#    aiortc removed            (no longer needed — no WebRTC)
+#    av removed                (no longer needed — no av.VideoFrame decoding)
 #    pyttsx3 removed         (no audio drivers on cloud — Web Speech API used)
 #    sounddevice removed     (no audio hardware on cloud)
 #    kaggle / kagglesdk removed  (dataset tools, not needed at runtime)
@@ -26,11 +29,11 @@ opencv-python-headless==4.9.0.80
 
 numpy==1.26.4
 
-# ── Streamlit + WebRTC ───────────────────────────────────────────────────────
+# ── Streamlit ────────────────────────────────────────────────────────────────
 streamlit>=1.32.0
-streamlit-webrtc==0.47.9   # WebRTC integration — browser webcam → server
-aiortc==1.9.0              # WebRTC transport layer (required by streamlit-webrtc)
-av==12.3.0                 # PyAV — av.VideoFrame decoding inside recv()
+
+# Browser JS captures webcam frames and POSTs base64 JPEGs to /predict.
+# FastAPI runs in a daemon thread on port 8000 alongside Streamlit.
 
 # ── Data / utilities ─────────────────────────────────────────────────────────
 scikit-learn==1.8.0

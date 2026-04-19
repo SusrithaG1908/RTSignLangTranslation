@@ -9,7 +9,16 @@
 #    sounddevice added       (audio I/O, useful for local experimentation)
 #    kaggle / kagglesdk added (dataset download scripts)
 #    tensorflow-io-gcs-filesystem added (GCS dataset access if needed locally)
-#    streamlit-webrtc / aiortc / av still included — local runs use WebRTC too
+#
+#  v8.0 changes (both local and cloud):
+#    streamlit-webrtc removed  (replaced by browser JS + HTTP fetch)
+#    aiortc removed            (no longer needed — no WebRTC)
+#    av removed                (no longer needed — no av.VideoFrame decoding)
+#    fastapi + uvicorn added   (HTTP predict endpoint, used when RUN_MODE=browser)
+#    pydantic added            (FastAPI request body model)
+#
+#  Note: fastapi/uvicorn are only activated when RUN_MODE=browser locally.
+#  In default local mode (OpenCV), they start as a daemon thread but are idle.
 # =============================================================================
 
 # ── Core ML ──────────────────────────────────────────────────────────────────
@@ -27,11 +36,10 @@ opencv-contrib-python==4.9.0.80
 
 numpy==1.26.4
 
-# ── Streamlit + WebRTC ───────────────────────────────────────────────────────
+# ── Streamlit ────────────────────────────────────────────────────────────────
 streamlit>=1.32.0
-streamlit-webrtc==0.47.9
-aiortc==1.9.0
-av==12.3.0
+
+# Used when RUN_MODE=browser (cloud simulation locally) and always on HF Spaces.
 
 # ── TTS (local only) ─────────────────────────────────────────────────────────
 # On cloud, TTS is handled by the browser's Web Speech API (no package needed).
