@@ -77,20 +77,32 @@ _api_mp_mod    = None
 _api_mp_draw   = None
 _api_hands_det = None
 
-_predict_server_started = threading.Event()   # guard: start at most once
+def _is_port_in_use(port: int) -> bool:
+    """Probe whether something is already listening on the port."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 def _ensure_predict_server_running():
     """
     Start a lightweight HTTP predict server using only stdlib http.server.
-    No uvicorn, no FastAPI, no ASGI — nothing that can be auto-discovered.
-    Safe to call multiple times — only the first call does any work.
+    Guards against double-binding by probing the port first — safe across
+    Streamlit reruns which re-execute module-level code each time.
     """
-    if _predict_server_started.is_set():
-        return
-    _predict_server_started.set()
+    if _is_port_in_use(8000):
+        return   # already running from a previous rerun or startup
 
     import json as _json
     from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    # Shared latest-result store — updated by POST /predict, read by GET /result
+    _latest = {"char": "–", "conf": 0.0, "word": ""}
+    _latest_lock = threading.Lock()
+
+    # Stability buffer lives server-side so it persists across HTTP requests
+    _stab_buf  = []
+    _stab_word = [""]   # list so nested function can mutate it
 
     class _PredictHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -101,10 +113,54 @@ def _ensure_predict_server_running():
             self._cors()
             self.end_headers()
 
+        def do_GET(self):
+            # GET /result — Streamlit polls this to update the right panel
+            with _latest_lock:
+                payload = _json.dumps(_latest).encode()
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
         def do_POST(self):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body   = _json.loads(self.rfile.read(length))
+
+                # Handle /reset — clears word from JS stop button
+                if self.path == "/reset":
+                    with _latest_lock:
+                        _stab_buf.clear()
+                        _stab_word[0] = ""
+                        _latest.update({"char": "–", "conf": 0.0, "word": ""})
+                    self.send_response(200)
+                    self._cors()
+                    self.end_headers()
+                    return
+
+                # Handle delete / reset actions from iframe buttons
+                if body.get("delete"):
+                    if _stab_word[0]:
+                        _stab_word[0] = _stab_word[0][:-1]
+                    with _latest_lock:
+                        _latest.update({"char": "–", "conf": 0.0, "word": _stab_word[0]})
+                    result = {"char": "–", "conf": 0.0, "word": _stab_word[0]}
+                    payload = _json.dumps(result).encode()
+                    self.send_response(200); self._cors()
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers(); self.wfile.write(payload)
+                    return
+
+                if body.get("reset"):
+                    _stab_buf.clear(); _stab_word[0] = ""
+                    with _latest_lock:
+                        _latest.update({"char": "–", "conf": 0.0, "word": ""})
+                    self.send_response(200); self._cors(); self.end_headers()
+                    return
+
                 img_bytes = base64.b64decode(body["image"])
                 arr       = np.frombuffer(img_bytes, np.uint8)
                 frame     = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -117,9 +173,32 @@ def _ensure_predict_server_running():
                     _api_model, _api_labels,
                     _api_mp_mod, _api_mp_draw, _api_hands_det,
                 )
-                result = {"char": char or "–", "conf": round(float(conf), 3)}
+                char = char or "–"
+                conf = round(float(conf), 3)
+
+                # Stability buffer for word building (server-side)
+                STAB_N = 6   # reduced from 8 for faster response
+                THRESH = 0.70
+                if char != "–" and conf >= THRESH:
+                    _stab_buf.append(char)
+                    if len(_stab_buf) > STAB_N:
+                        _stab_buf.pop(0)
+                    if len(_stab_buf) == STAB_N and len(set(_stab_buf)) == 1:
+                        w = _stab_word[0]
+                        if not w or w[-1] != char:
+                            _stab_word[0] = w + char
+                        _stab_buf.clear()
+                else:
+                    if _stab_buf:
+                        _stab_buf.pop(0)
+
+                result = {"char": char, "conf": conf, "word": _stab_word[0]}
             except Exception as exc:
-                result = {"char": "–", "conf": 0.0, "error": str(exc)}
+                result = {"char": "–", "conf": 0.0, "word": _stab_word[0],
+                          "error": str(exc)}
+
+            with _latest_lock:
+                _latest.update(result)
 
             payload = _json.dumps(result).encode()
             self.send_response(200)
@@ -131,12 +210,14 @@ def _ensure_predict_server_running():
 
         def _cors(self):
             self.send_header("Access-Control-Allow-Origin",  "*")
-            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _run():
-        server = HTTPServer(("0.0.0.0", 8000), _PredictHandler)
-        server.serve_forever()
+        import socket
+        srv = HTTPServer(("0.0.0.0", 8000), _PredictHandler)
+        srv.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.serve_forever()
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -690,82 +771,102 @@ if model_err or mp_err:
 # _tts_slot: zero-height placeholder outside columns for browser TTS injection
 _tts_slot = st.empty()
 
-col_vid, col_out = st.columns([1.15, 0.85], gap="large")
+# Column layout differs by mode:
+#   browser → single full-width column (iframe contains its own result panel)
+#   local   → two columns (video left, Streamlit result panel right)
+if ACTIVE_MODE == "browser":
+    col_vid  = st.columns(1)[0]   # full width — iframe is self-contained
+    col_out  = None               # not used in browser mode
+else:
+    col_vid, col_out = st.columns([1.15, 0.85], gap="large")
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RIGHT — output panel  (shared by both modes)
+#  RIGHT — output panel  (local OpenCV mode only)
+#  In browser mode col_out is None and the iframe handles all result display.
 # ══════════════════════════════════════════════════════════════════════════════
-with col_out:
-    st.markdown('<div class="clean-card">', unsafe_allow_html=True)
 
-    char_slot = st.empty()
-    conf_slot = st.empty()
+# Define no-op stubs so render_* calls in the local camera loop always exist
+char_slot = None
+conf_slot = None
+word_slot = None
 
-    def render_char_conf(char, conf):
-        char_slot.markdown(f"""
-        <div class="char-panel">
-            <div class="clabel">Detected Character</div>
-            <div class="char-big">{char}</div>
-        </div>""", unsafe_allow_html=True)
-        pct  = conf * 100
-        fill = (T["success"] if conf >= 0.80
-                else (T["warning"] if conf >= CONF_THRESH else T["danger"]))
-        conf_slot.markdown(f"""
-        <div class="conf-wrap">
-          <div class="conf-row">
-            <span class="conf-row-label">Confidence</span>
-            <div class="conf-track">
-              <div class="conf-fill" style="width:{pct:.1f}%;background:{fill};"></div>
-            </div>
-            <span class="conf-pct" style="color:{fill};">{pct:.0f}%</span>
-          </div>
-        </div>""", unsafe_allow_html=True)
+def render_char_conf(char, conf):
+    if char_slot is None:
+        return
+    char_slot.markdown(f"""
+    <div class="char-panel">
+        <div class="clabel">Detected Character</div>
+        <div class="char-big">{char}</div>
+    </div>""", unsafe_allow_html=True)
+    pct  = conf * 100
+    fill = (T["success"] if conf >= 0.80
+            else (T["warning"] if conf >= CONF_THRESH else T["danger"]))
+    conf_slot.markdown(f"""
+    <div class="conf-wrap">
+      <div class="conf-row">
+        <span class="conf-row-label">Confidence</span>
+        <div class="conf-track">
+          <div class="conf-fill" style="width:{pct:.1f}%;background:{fill};"></div>
+        </div>
+        <span class="conf-pct" style="color:{fill};">{pct:.0f}%</span>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
-    word_slot = st.empty()
+def render_word(word):
+    if word_slot is None:
+        return
+    display = word if word else "…"
+    word_slot.markdown(f"""
+    <div class="word-box">
+        <div class="wlabel">Formed Word</div>
+        <div class="word-text">{display}</div>
+    </div>""", unsafe_allow_html=True)
 
-    def render_word(word):
-        display = word if word else "…"
-        word_slot.markdown(f"""
-        <div class="word-box">
-            <div class="wlabel">Formed Word</div>
-            <div class="word-text">{display}</div>
-        </div>""", unsafe_allow_html=True)
+if ACTIVE_MODE != "browser":
+    with col_out:
+        st.markdown('<div class="clean-card">', unsafe_allow_html=True)
+        # Spacer to align right panel with top of video (matches status label height)
+        st.markdown('<div style="height:1.6rem;"></div>', unsafe_allow_html=True)
 
-    render_char_conf(st.session_state.last_char, st.session_state.last_conf)
-    render_word(st.session_state.word)
+        char_slot = st.empty()
+        conf_slot = st.empty()
+        word_slot = st.empty()
 
-    # Action buttons
-    ab1, ab2, ab3 = st.columns(3)
-    with ab1:
-        if st.button("🔊 Speak", use_container_width=True, key="btn_speak"):
-            if st.session_state.word:
-                speak_text(st.session_state.word)
-            else:
-                st.toast("Nothing to speak yet!", icon="🤫")
-    with ab2:
-        if st.button("⌫ Delete", use_container_width=True, key="btn_back"):
-            st.session_state.word = st.session_state.word[:-1]
-            render_word(st.session_state.word)
-    with ab3:
-        if st.button("🔄 Reset", use_container_width=True, key="btn_reset"):
-            if st.session_state.word:
-                st.session_state.history.append(st.session_state.word)
-            st.session_state.word       = ""
-            st.session_state.stable_buf = []
-            st.session_state.last_char  = "–"
-            st.session_state.last_conf  = 0.0
-            st.session_state.run_camera = False
-            st.rerun()
+        render_char_conf(st.session_state.last_char, st.session_state.last_conf)
+        render_word(st.session_state.word)
 
-    if st.session_state.history:
-        st.markdown('<hr class="hdivider">', unsafe_allow_html=True)
-        chips = "".join(
-            f'<span class="hist-chip">{w}</span>'
-            for w in st.session_state.history[-6:]
-        )
-        st.markdown(f'<div class="hist-wrap">{chips}</div>', unsafe_allow_html=True)
+        # Action buttons
+        ab1, ab2, ab3 = st.columns(3)
+        with ab1:
+            if st.button("🔊 Speak", use_container_width=True, key="btn_speak"):
+                if st.session_state.word:
+                    speak_text(st.session_state.word)
+                else:
+                    st.toast("Nothing to speak yet!", icon="🤫")
+        with ab2:
+            if st.button("⌫ Delete", use_container_width=True, key="btn_back"):
+                st.session_state.word = st.session_state.word[:-1]
+                render_word(st.session_state.word)
+        with ab3:
+            if st.button("🔄 Reset", use_container_width=True, key="btn_reset"):
+                if st.session_state.word:
+                    st.session_state.history.append(st.session_state.word)
+                st.session_state.word       = ""
+                st.session_state.stable_buf = []
+                st.session_state.last_char  = "–"
+                st.session_state.last_conf  = 0.0
+                st.session_state.run_camera = False
+                st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
+        if st.session_state.history:
+            st.markdown('<hr class="hdivider">', unsafe_allow_html=True)
+            chips = "".join(
+                f'<span class="hist-chip">{w}</span>'
+                for w in st.session_state.history[-6:]
+            )
+            st.markdown(f'<div class="hist-wrap">{chips}</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -783,15 +884,24 @@ with col_vid:
             unsafe_allow_html=True,
         )
 
-        mirror_js = "true" if st.session_state.mirror else "false"
-        accent    = T["accent"]
-        bg2       = T["bg2"]
-        text_c    = T["text"]
-        muted     = T["text_muted"]
-        success   = T["success"]
-        warning   = T["warning"]
-        danger    = T["danger"]
-        border    = T["border"]
+        mirror_js   = "true" if st.session_state.mirror else "false"
+        is_cloud_js = "true" if IS_CLOUD else "false"
+        accent      = T["accent"]
+        accent_dark = T["accent_dark"]
+        accent_glow = T["accent_glow"]
+        bg2         = T["bg2"]
+        text_c      = T["text"]
+        muted       = T["text_muted"]
+        success     = T["success"]
+        warning     = T["warning"]
+        danger      = T["danger"]
+        border      = T["border"]
+        surface     = T["surface"]
+        surface2    = T["surface2"]
+        prog_bg     = T["prog_bg"]
+        btn_shadow  = T["btn_shadow"]
+        chip_bg     = T["chip_bg"]
+        chip_text   = T["chip_text"]
 
         browser_widget = f"""
 <!DOCTYPE html>
@@ -799,61 +909,184 @@ with col_vid:
 <head>
 <meta charset="utf-8">
 <style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: transparent; font-family: 'Montserrat', sans-serif; }}
-  #wrap {{ position: relative; width: 100%; }}
-  video {{
-    width: 100%; border-radius: 14px; display: block;
-    background: {bg2}; max-height: 420px; object-fit: cover;
-  }}
-  #overlay {{
-    position: absolute; top: 10px; left: 10px;
-    background: rgba(0,0,0,0.55); border-radius: 10px;
-    padding: 6px 12px; font-size: 1.1rem; font-weight: 800;
-    color: #fff; display: none;
-  }}
-  #status {{
-    margin-top: 8px; font-size: 0.75rem; font-weight: 700;
-    color: {muted}; text-align: center;
-  }}
-  #btn {{
-    display: block; margin: 10px auto 0; padding: 0.5rem 2rem;
-    border-radius: 50px; border: 2px solid {border};
-    background: transparent; color: {text_c};
-    font-family: 'Montserrat', sans-serif; font-weight: 700;
-    font-size: 0.86rem; cursor: pointer; transition: all 0.2s;
-  }}
-  #btn.running {{ background: #ef4444; border-color: #ef4444; color: #fff; }}
-  #btn:hover {{ border-color: {accent}; color: {accent}; }}
-  #btn.running:hover {{ background: #dc2626; border-color: #dc2626; color: #fff; }}
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap');
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+html, body {{ background: transparent; font-family: 'Montserrat', sans-serif;
+  color: {text_c}; height: 100%; }}
+
+/* ── Layout: video left, results right ── */
+#main {{ display: flex; gap: 16px; align-items: flex-start; width: 100%; }}
+#left  {{ flex: 1.15; min-width: 0; }}
+#right {{ flex: 0.85; display: flex; flex-direction: column; gap: 10px; min-width: 0; }}
+
+/* ── Video ── */
+#wrap {{ position: relative; width: 100%; min-height: 420px; }}
+video {{
+  width: 100%; border-radius: 14px; display: block;
+  background: {bg2}; height: 420px; max-height: 420px;
+  object-fit: cover;
+}}
+#overlay {{
+  position: absolute; top: 10px; left: 10px;
+  background: rgba(0,0,0,0.60); border-radius: 10px;
+  padding: 5px 12px; font-size: 0.95rem; font-weight: 800;
+  color: #fff; display: none;
+}}
+#status {{
+  margin-top: 6px; font-size: 0.72rem; font-weight: 700;
+  color: {muted}; text-align: center; min-height: 1.2em;
+}}
+#btn {{
+  display: block; margin: 8px auto 0; padding: 0.45rem 2rem;
+  border-radius: 50px; border: 2px solid {border};
+  background: transparent; color: {text_c};
+  font-family: 'Montserrat', sans-serif; font-weight: 700;
+  font-size: 0.84rem; cursor: pointer; transition: all 0.2s;
+}}
+#btn.running {{ background: #ef4444; border-color: #ef4444; color: #fff; }}
+#btn:hover {{ border-color: {accent}; color: {accent}; }}
+#btn.running:hover {{ background: #dc2626; border-color: #dc2626; color: #fff; }}
+
+/* ── Detected Character panel ── */
+#char-panel {{
+  background: {surface2}; border: 1px solid {border}; border-radius: 16px;
+  text-align: center; padding: 1.2rem 0.5rem 0.9rem; position: relative; overflow: hidden;
+}}
+#char-panel::before {{
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, {accent_glow} 0%, transparent 68%);
+  pointer-events: none;
+}}
+.clabel {{
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.4px; color: {muted}; margin-bottom: 0.4rem;
+}}
+#char-big {{
+  font-size: 6rem; font-weight: 900; color: {accent}; line-height: 1;
+  text-shadow: 0 0 40px {accent_glow};
+}}
+
+/* ── Confidence bar ── */
+#conf-wrap {{ margin-bottom: 0; }}
+.conf-row {{ display: flex; align-items: center; gap: 10px; }}
+.conf-label {{ font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.8px; color: {muted}; flex-shrink: 0; width: 80px; }}
+.conf-track {{ flex: 1; height: 8px; background: {prog_bg}; border-radius: 50px;
+  overflow: hidden; border: 1px solid {border}; }}
+#conf-fill {{ height: 100%; border-radius: 50px; width: 0%;
+  transition: width 0.3s cubic-bezier(.4,0,.2,1); background: {danger}; }}
+#conf-pct {{ font-size: 0.82rem; font-weight: 700; min-width: 36px;
+  text-align: right; color: {danger}; }}
+
+/* ── Formed Word box ── */
+#word-box {{
+  background: linear-gradient(135deg, {accent_dark} 0%, {accent} 100%);
+  border-radius: 16px; text-align: center; padding: 1.15rem 1rem 1rem;
+  box-shadow: {btn_shadow}; position: relative; overflow: hidden;
+}}
+#word-box::after {{
+  content: ''; position: absolute; top: -40%; left: -10%;
+  width: 80px; height: 80px; background: rgba(255,255,255,0.09);
+  border-radius: 50%; filter: blur(18px); pointer-events: none;
+}}
+.wlabel {{ font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.4px; color: rgba(255,255,255,0.65); margin-bottom: 0.4rem; }}
+#word-text {{
+  font-size: 2.6rem; font-weight: 900; color: #fff; letter-spacing: 0.12em;
+  min-height: 3.2rem; word-break: break-all;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.2);
+}}
+
+/* ── Action buttons ── */
+#actions {{ display: flex; gap: 8px; }}
+.act-btn {{
+  flex: 1; padding: 0.52rem 0.5rem; border-radius: 50px;
+  border: 2px solid {border}; background: {surface};
+  color: {text_c}; font-family: 'Montserrat', sans-serif;
+  font-weight: 700; font-size: 0.78rem; cursor: pointer; transition: all 0.2s;
+}}
+.act-btn:hover {{ border-color: {accent}; color: {accent}; background: {surface2}; }}
+
+/* ── History chips ── */
+#history {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }}
+.hist-chip {{
+  background: {chip_bg}; border: 1px solid {border}; border-radius: 50px;
+  padding: 0.22rem 0.8rem; font-size: 0.78rem; font-weight: 700; color: {chip_text};
+}}
 </style>
 </head>
 <body>
-<div id="wrap">
-  <video id="cam" autoplay playsinline muted></video>
-  <canvas id="canvas" style="display:none" width="320" height="240"></canvas>
-  <div id="overlay"></div>
+<div id="main">
+  <!-- Left: video -->
+  <div id="left">
+    <div id="wrap">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="canvas" style="display:none" width="320" height="240"></canvas>
+      <div id="overlay"></div>
+    </div>
+    <div id="status">Click ▶ Start Camera to begin</div>
+    <button id="btn" onclick="toggleCamera()">▶ Start Camera</button>
+  </div>
+
+  <!-- Right: result components matching Streamlit design exactly -->
+  <div id="right">
+    <div id="char-panel">
+      <div class="clabel">Detected Character</div>
+      <div id="char-big">–</div>
+    </div>
+
+    <div id="conf-wrap">
+      <div class="conf-row">
+        <span class="conf-label">Confidence</span>
+        <div class="conf-track"><div id="conf-fill"></div></div>
+        <span id="conf-pct">0%</span>
+      </div>
+    </div>
+
+    <div id="word-box">
+      <div class="wlabel">Formed Word</div>
+      <div id="word-text">…</div>
+    </div>
+
+    <div id="actions">
+      <button class="act-btn" onclick="speakWord()">🔊 Speak</button>
+      <button class="act-btn" onclick="deleteChar()">⌫ Delete</button>
+      <button class="act-btn" onclick="resetAll()">🔄 Reset</button>
+    </div>
+
+    <div id="history"></div>
+  </div>
 </div>
-<div id="status">Click ▶ Start Camera to begin</div>
-<button id="btn" onclick="toggleCamera()">▶ Start Camera</button>
 
 <script>
-const video   = document.getElementById('cam');
-const canvas  = document.getElementById('canvas');
-const overlay = document.getElementById('overlay');
-const status  = document.getElementById('status');
-const btn     = document.getElementById('btn');
-const ctx     = canvas.getContext('2d');
-const MIRROR  = {mirror_js};
-const THRESH  = 0.70;
-const STAB_N  = 8;
+const video    = document.getElementById('cam');
+const canvas   = document.getElementById('canvas');
+const overlay  = document.getElementById('overlay');
+const statusEl = document.getElementById('status');
+const btn      = document.getElementById('btn');
+const ctx      = canvas.getContext('2d');
+const charBig  = document.getElementById('char-big');
+const confFill = document.getElementById('conf-fill');
+const confPct  = document.getElementById('conf-pct');
+const wordText = document.getElementById('word-text');
+const histDiv  = document.getElementById('history');
 
-let stableBuf  = [];
-let word       = '';
+const MIRROR = {mirror_js};
+const THRESH = 0.70;
+const SUCCESS = '{success}';
+const WARNING = '{warning}';
+const DANGER  = '{danger}';
+
 let running    = false;
 let stream     = null;
 let intervalId = null;
 let framesSent = 0;
+let history    = [];
+
+const IS_CLOUD   = {is_cloud_js};
+// On real HF deployment nginx proxies /predict at the same origin.
+// In local cloud simulation there is no nginx — post directly to the predict server.
+const predictUrl = IS_CLOUD ? '/predict' : 'http://localhost:8000/predict';
 
 function toggleCamera() {{
   if (!running) startCamera(); else stopCamera();
@@ -862,19 +1095,18 @@ function toggleCamera() {{
 async function startCamera() {{
   try {{
     stream = await navigator.mediaDevices.getUserMedia({{
-      video: {{ width: 640, height: 480, facingMode: 'user' }},
-      audio: false,
+      video: {{ width: 640, height: 480, facingMode: 'user' }}, audio: false,
     }});
     video.srcObject = stream;
     await video.play();
     running = true;
     btn.textContent = '⏹ Stop Camera';
     btn.classList.add('running');
-    status.textContent = 'Camera live — detecting…';
+    statusEl.textContent = 'Camera live — detecting…';
     overlay.style.display = 'block';
-    intervalId = setInterval(sendFrame, 200);   // 5 fps
+    intervalId = setInterval(sendFrame, 150);
   }} catch(e) {{
-    status.textContent = '❌ Camera error: ' + e.message;
+    statusEl.textContent = '❌ Camera error: ' + e.message;
   }}
 }}
 
@@ -886,25 +1118,19 @@ function stopCamera() {{
   btn.textContent = '▶ Start Camera';
   btn.classList.remove('running');
   overlay.style.display = 'none';
-  status.textContent = 'Camera stopped.';
+  statusEl.textContent = 'Camera stopped.';
   framesSent = 0;
 }}
 
 async function sendFrame() {{
   if (!running || video.readyState < 2) return;
-
   ctx.save();
-  if (MIRROR) {{
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-  }}
+  if (MIRROR) {{ ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }}
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   ctx.restore();
-
   const b64 = canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
-
   try {{
-    const resp = await fetch('http://localhost:8000/predict', {{
+    const resp = await fetch(predictUrl, {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ image: b64, mirror: false }}),
@@ -912,64 +1138,86 @@ async function sendFrame() {{
     if (!resp.ok) return;
     const data = await resp.json();
     framesSent++;
-    processResult(data.char, data.conf);
-    status.textContent = `Frames sent: ${{framesSent}} · Last: ${{data.char}} (${{Math.round(data.conf*100)}}%)`;
+    updateResults(data.char, data.conf, data.word);
+    statusEl.textContent = `Frame ${{framesSent}} · ${{data.char}} (${{Math.round(data.conf*100)}}%)`;
   }} catch(e) {{
-    status.textContent = '⚠️ Backend unreachable — retrying…';
+    statusEl.textContent = '⚠️ Backend unreachable — retrying…';
   }}
 }}
 
-function processResult(char, conf) {{
-  if (char && char !== '–' && conf >= THRESH) {{
-    overlay.textContent = char + '  ' + Math.round(conf * 100) + '%';
-    overlay.style.color = conf >= 0.80 ? '{success}' : (conf >= THRESH ? '{warning}' : '{danger}');
-    stableBuf.push(char);
-    if (stableBuf.length > STAB_N) stableBuf.shift();
-    if (stableBuf.length === STAB_N && new Set(stableBuf).size === 1) {{
-      if (!word || word[word.length-1] !== char) word += char;
-      stableBuf = [];
-    }}
-  }} else {{
-    if (stableBuf.length) stableBuf.shift();
-    overlay.textContent = char === '–' ? '' : (char || '');
+function updateResults(char, conf, word) {{
+  const active = char && char !== '–' && conf >= THRESH;
+  const pct    = Math.round(conf * 100);
+  const color  = conf >= 0.80 ? SUCCESS : (conf >= THRESH ? WARNING : DANGER);
+
+  // Video overlay
+  overlay.textContent = active ? char + '  ' + pct + '%' : '';
+
+  // Detected character
+  charBig.textContent = active ? char : '–';
+
+  // Confidence bar
+  confFill.style.width      = pct + '%';
+  confFill.style.background = color;
+  confPct.textContent       = pct + '%';
+  confPct.style.color       = color;
+
+  // Formed word
+  wordText.textContent = word || '…';
+}}
+
+function speakWord() {{
+  const w = wordText.textContent;
+  if (!w || w === '…') return;
+  if (window.speechSynthesis) {{
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(w);
+    u.rate = 0.9; u.lang = 'en-US';
+    window.speechSynthesis.speak(u);
   }}
-  window.parent.postMessage({{
-    type: 'signlang',
-    char: (char && conf >= THRESH) ? char : '–',
-    conf: conf,
-    word: word,
-  }}, '*');
+}}
+
+function deleteChar() {{
+  const actUrl = IS_CLOUD ? '/predict' : 'http://localhost:8000/predict';
+  fetch(actUrl, {{   // delete char
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ delete: true }}),
+  }}).then(r => r.json()).then(d => {{
+    wordText.textContent = d.word || '…';
+  }});
+}}
+
+function resetAll() {{
+  const w = wordText.textContent;
+  if (w && w !== '…') {{
+    history.unshift(w);
+    if (history.length > 6) history.pop();
+    renderHistory();
+  }}
+  fetch(actUrl || (IS_CLOUD ? '/predict' : 'http://localhost:8000/predict'), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ reset: true }}),
+  }}).then(() => {{
+    charBig.textContent  = '–';
+    confFill.style.width = '0%';
+    confPct.textContent  = '0%';
+    wordText.textContent = '…';
+    overlay.textContent  = '';
+  }});
+}}
+
+function renderHistory() {{
+  histDiv.innerHTML = history.map(w =>
+    '<span class="hist-chip">' + w + '</span>'
+  ).join('');
 }}
 </script>
 </body>
 </html>
 """
-        components.html(browser_widget, height=520, scrolling=False)
-
-        st.markdown("""
-<script>
-window.addEventListener('message', function(e) {
-  if (!e.data || e.data.type !== 'signlang') return;
-  const p = new URLSearchParams(window.location.search);
-  p.set('sl_char', e.data.char  || '–');
-  p.set('sl_conf', (e.data.conf || 0).toFixed(3));
-  p.set('sl_word', e.data.word  || '');
-  window.history.replaceState({}, '', '?' + p.toString());
-}, false);
-</script>
-""", unsafe_allow_html=True)
-
-        qp      = st.query_params
-        sl_char = qp.get("sl_char", st.session_state.last_char)
-        sl_conf = float(qp.get("sl_conf", st.session_state.last_conf))
-        sl_word = qp.get("sl_word", st.session_state.word)
-
-        if sl_char != st.session_state.last_char or sl_word != st.session_state.word:
-            st.session_state.last_char = sl_char
-            st.session_state.last_conf = sl_conf
-            st.session_state.word      = sl_word
-            render_char_conf(sl_char, sl_conf)
-            render_word(sl_word)
+        components.html(browser_widget, height=760, scrolling=False)
 
     # ── LOCAL MODE: unchanged OpenCV loop ─────────────────────────────────────
     else:

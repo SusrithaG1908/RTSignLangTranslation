@@ -1,19 +1,17 @@
 # =============================================================================
 #  requirements.txt  —  CLOUD DEPLOYMENT
-#  Used by: Render, Hugging Face Spaces (read automatically from repo root)
+#  Used by: Hugging Face Spaces (Docker SDK) — installed inside the container
 #
 #  Key differences from requirements-local.txt:
 #    opencv-python-headless  instead of  opencv-contrib-python  (no display)
 #    tensorflow only         instead of  tensorflow + tensorflow-intel (Linux)
-#    fastapi + uvicorn added (HTTP predict endpoint — replaces streamlit-webrtc)
-#    pydantic added          (FastAPI request body model)
-#    streamlit-webrtc removed  (replaced by browser JS + HTTP fetch in v8.0)
-#    aiortc removed            (no longer needed — no WebRTC)
-#    av removed                (no longer needed — no av.VideoFrame decoding)
 #    pyttsx3 removed         (no audio drivers on cloud — Web Speech API used)
 #    sounddevice removed     (no audio hardware on cloud)
 #    kaggle / kagglesdk removed  (dataset tools, not needed at runtime)
 #    tensorflow-io-gcs-filesystem removed  (GCS only, not needed here)
+#    streamlit-webrtc / aiortc / av removed  (replaced by browser JS + HTTP fetch)
+#    fastapi / uvicorn / pydantic NOT needed  (predict server uses stdlib http.server)
+#    scikit-learn / matplotlib / seaborn / pandas removed  (training only, not runtime)
 # =============================================================================
 
 # ── Core ML ──────────────────────────────────────────────────────────────────
@@ -23,8 +21,7 @@ keras==2.15.0
 # ── Computer Vision ──────────────────────────────────────────────────────────
 mediapipe==0.10.9
 
-# headless build: identical API to opencv-contrib-python for all operations
-# used in this project; omits GUI/display dependencies that crash on servers
+# headless build — no GUI deps, identical API for all operations used at runtime
 opencv-python-headless==4.9.0.80
 
 numpy==1.26.4
@@ -32,14 +29,7 @@ numpy==1.26.4
 # ── Streamlit ────────────────────────────────────────────────────────────────
 streamlit>=1.32.0
 
-# Browser JS captures webcam frames and POSTs base64 JPEGs to /predict.
-# FastAPI runs in a daemon thread on port 8000 alongside Streamlit.
-
-# ── Data / utilities ─────────────────────────────────────────────────────────
-scikit-learn==1.8.0
-matplotlib==3.10.8
-seaborn==0.13.2
-pandas==3.0.0
+# ── Utilities ────────────────────────────────────────────────────────────────
 pillow==12.1.1
 requests==2.32.5
 
